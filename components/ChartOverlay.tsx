@@ -97,8 +97,8 @@ export default function ChartOverlay({ series, normalizeAll }: Props) {
         timeVisible:    false,
         secondsVisible: false,
       },
-      rightPriceScale: { borderColor: '#374151', visible: true,  title: '殖利率 (%)' },
-      leftPriceScale:  { borderColor: '#374151', visible: false, title: '價格' },
+      rightPriceScale: { borderColor: '#374151', visible: true  },
+      leftPriceScale:  { borderColor: '#374151', visible: false },
       handleScroll: { pressedMouseMove: true, mouseWheel: true, horzTouchDrag: true },
       handleScale:  { mouseWheel: true, pinch: true, axisPressedMouseMove: true },
     })
@@ -180,8 +180,8 @@ export default function ChartOverlay({ series, normalizeAll }: Props) {
     const hasLeft  = !normalizeAll && series.some((s) => s.axis === 'left')
     const hasRight = !normalizeAll && series.some((s) => s.axis === 'right')
     chart.applyOptions({
-      leftPriceScale:  { visible: hasLeft,              title: hasLeft  ? '價格'       : '' },
-      rightPriceScale: { visible: hasRight || normalizeAll, title: normalizeAll ? '% 變化' : hasRight ? '殖利率 (%)' : '' },
+      leftPriceScale:  { visible: hasLeft },
+      rightPriceScale: { visible: hasRight || normalizeAll },
     })
 
     let anyAdded = false
