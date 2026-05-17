@@ -65,8 +65,8 @@ export default function Home() {
     const saved = loadSeries()
     if (saved.length === 0) return
     const restored: SeriesConfig[] = saved.map((s) => ({
-      visible: true,
       ...s,
+      visible: s.visible ?? true,
       data: [],
       loading: s.type !== 'formula',
     }))
