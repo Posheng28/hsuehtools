@@ -1,18 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getCached, setCached, throttle } from '@/lib/cache'
+import { getCached, setCached } from '@/lib/cache'
 
-function toStooqTicker(ticker: string): string {
+function toYahooTicker(ticker: string): string {
   const t = ticker.trim()
-  if (t.startsWith('^') || t.includes('.')) return t.toLowerCase()
-  return `${t.toLowerCase()}.us`
+  // Already a Yahoo-format ticker (^GSPC, TSM, etc.) — pass through
+  return t.toUpperCase()
 }
 
-function rangeStart(range: string): string {
-  const d = new Date()
-  if (range === '1Y') d.setFullYear(d.getFullYear() - 1)
-  else if (range === '5Y') d.setFullYear(d.getFullYear() - 5)
-  else d.setFullYear(d.getFullYear() - 2)
-  return d.toISOString().split('T')[0].replace(/-/g, '')
+function yahooRange(range: string): string {
+  if (range === '1Y') return '1y'
+  if (range === '5Y') return '5y'
+  return '2y'
 }
 
 export async function GET(req: NextRequest) {
@@ -22,46 +20,35 @@ export async function GET(req: NextRequest) {
 
   if (!ticker) return NextResponse.json({ error: 'Missing ticker' }, { status: 400 })
 
-  const apiKey = process.env.STOOQ_API_KEY
-  if (!apiKey) return NextResponse.json({ error: 'STOOQ_API_KEY not set' }, { status: 500 })
-
-  const stooq    = toStooqTicker(ticker)
-  const cacheKey = `stocks:${stooq}:${range}`
+  const symbol   = toYahooTicker(ticker)
+  const cacheKey = `stocks:${symbol}:${range}`
   const hit = getCached(cacheKey)
   if (hit) return NextResponse.json({ data: hit, cached: true })
 
-  await throttle('stooq', 400, 300)
-
-  const today = new Date().toISOString().split('T')[0].replace(/-/g, '')
-  const d1    = rangeStart(range)
-  const url   = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooq)}&d1=${d1}&d2=${today}&i=d&apikey=${apiKey}`
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${yahooRange(range)}`
 
   try {
     const res = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://stooq.com/',
       },
     })
 
-    if (!res.ok) throw new Error(`Stooq responded ${res.status}`)
+    if (!res.ok) throw new Error(`Yahoo Finance responded ${res.status}`)
 
-    const text  = await res.text()
-    const lines = text.trim().split('\n')
+    const json   = await res.json()
+    const result = json?.chart?.result?.[0]
+    if (!result) throw new Error(`找不到 "${ticker}" 的資料，請確認代碼（例：TSM、NVDA、^GSPC）`)
 
-    if (lines.length < 2 || text.toLowerCase().includes('apikey')) {
-      throw new Error(`找不到 "${ticker}" 的資料，請確認代碼（美股格式：aapl.us）`)
-    }
+    const timestamps: number[] = result.timestamp ?? []
+    const closes: number[]     = result.indicators?.quote?.[0]?.close ?? []
 
-    const data = lines
-      .slice(1)
-      .map((line) => {
-        const cols  = line.split(',')
-        if (cols.length < 5) return null
-        const date  = cols[0].trim()
-        const close = parseFloat(cols[4])
-        if (!date.match(/^\d{4}-\d{2}-\d{2}$/) || isNaN(close)) return null
-        return { date, value: close }
+    const data = timestamps
+      .map((ts, i) => {
+        const date  = new Date(ts * 1000).toISOString().split('T')[0]
+        const value = closes[i]
+        if (value == null || isNaN(value)) return null
+        return { date, value }
       })
       .filter(Boolean)
       .sort((a, b) => (a!.date < b!.date ? -1 : 1)) as { date: string; value: number }[]
