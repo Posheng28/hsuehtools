@@ -1,65 +1,185 @@
-import Image from "next/image";
+'use client'
+
+import { useState, useCallback, useEffect, useRef } from 'react'
+import dynamic from 'next/dynamic'
+import SeriesPanel from '@/components/SeriesPanel'
+import { SeriesConfig, DateRange, DATE_RANGE_LABELS, ChartType } from '@/lib/types'
+
+const ChartOverlay = dynamic(() => import('@/components/ChartOverlay'), { ssr: false })
+
+const STORAGE_KEY = 'chart-overlay-series'
+const RANGE_KEY   = 'chart-overlay-range'
+
+type SeriesSaved = Omit<SeriesConfig, 'data' | 'loading' | 'error'>
+
+function saveSeries(series: SeriesConfig[]) {
+  const saved: SeriesSaved[] = series.map(({ data: _d, loading: _l, error: _e, ...rest }) => rest)
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(saved))
+}
+
+function loadSeries(): SeriesSaved[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+async function fetchSeries(
+  cfg: Omit<SeriesConfig, 'data' | 'loading'>,
+  range: DateRange,
+): Promise<{ data: { date: string; value: number }[]; error?: string }> {
+  try {
+    let url: string
+    if (cfg.type === 'stocks') {
+      url = `/api/stocks?ticker=${encodeURIComponent(cfg.ticker!)}&range=${range}`
+    } else {
+      url = `/api/fred?series=${encodeURIComponent(cfg.fredId!)}&range=${range}`
+    }
+    const res = await fetch(url)
+    const json = await res.json()
+    if (json.error) return { data: [], error: json.error }
+    return { data: json.data }
+  } catch (e) {
+    return { data: [], error: e instanceof Error ? e.message : 'Failed to fetch' }
+  }
+}
 
 export default function Home() {
+  const [series, setSeries] = useState<SeriesConfig[]>([])
+  const [range, setRange] = useState<DateRange>(() => {
+    if (typeof window === 'undefined') return '2Y'
+    return (localStorage.getItem(RANGE_KEY) as DateRange) || '2Y'
+  })
+  const [normalizeAll, setNormalizeAll] = useState(false)
+  const hydrated = useRef(false)
+
+  // Save series config whenever it changes (skip initial empty state)
+  useEffect(() => {
+    if (!hydrated.current) return
+    saveSeries(series)
+  }, [series])
+
+  // Restore from localStorage on first mount
+  useEffect(() => {
+    hydrated.current = true
+    const saved = loadSeries()
+    if (saved.length === 0) return
+    const restored: SeriesConfig[] = saved.map((s) => ({
+      visible: true,
+      ...s,
+      data: [],
+      loading: s.type !== 'formula',
+    }))
+    setSeries(restored)
+    const r = (localStorage.getItem(RANGE_KEY) as DateRange) || '2Y'
+    for (const s of saved) {
+      if (s.type !== 'formula') {
+        fetchSeries(s, r).then(({ data, error }) => {
+          setSeries((prev) => prev.map((p) => p.id === s.id ? { ...p, data, loading: false, error } : p))
+        })
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const loadData = useCallback(async (cfg: Omit<SeriesConfig, 'data' | 'loading'>, r: DateRange) => {
+    if (cfg.type === 'formula') return
+    setSeries((prev) => prev.map((s) => s.id === cfg.id ? { ...s, loading: true, error: undefined } : s))
+    const { data, error } = await fetchSeries(cfg, r)
+    setSeries((prev) => prev.map((s) => s.id === cfg.id ? { ...s, data, loading: false, error } : s))
+  }, [])
+
+  const handleToggleVisible = useCallback((id: string) => {
+    setSeries((prev) => prev.map((s) => s.id === id ? { ...s, visible: !s.visible } : s))
+  }, [])
+
+  const handleAdd = useCallback(async (cfg: Omit<SeriesConfig, 'data' | 'loading'>) => {
+    const newSeries: SeriesConfig = { ...cfg, visible: true, data: [], loading: cfg.type !== 'formula' && cfg.type !== undefined }
+    setSeries((prev) => [...prev, newSeries])
+    if (cfg.type !== 'formula') {
+      const { data, error } = await fetchSeries(cfg, range)
+      setSeries((prev) => prev.map((s) => s.id === cfg.id ? { ...s, data, loading: false, error } : s))
+    }
+  }, [range])
+
+  const handleRemove = useCallback((id: string) => {
+    setSeries((prev) => prev.filter((s) => s.id !== id))
+  }, [])
+
+  const handleToggleAxis = useCallback((id: string) => {
+    setSeries((prev) => prev.map((s) =>
+      s.id === id ? { ...s, axis: s.axis === 'left' ? 'right' : 'left' } : s
+    ))
+  }, [])
+
+  const handleToggleNormalize = useCallback((id: string) => {
+    setSeries((prev) => prev.map((s) => s.id === id ? { ...s, normalize: !s.normalize } : s))
+  }, [])
+
+  const handleColorChange = useCallback((id: string, color: string) => {
+    setSeries((prev) => prev.map((s) => s.id === id ? { ...s, color } : s))
+  }, [])
+
+  const handleChartTypeChange = useCallback((id: string, chartType: ChartType) => {
+    setSeries((prev) => prev.map((s) => s.id === id ? { ...s, chartType } : s))
+  }, [])
+
+  const handleRangeChange = useCallback((newRange: DateRange) => {
+    setRange(newRange)
+    localStorage.setItem(RANGE_KEY, newRange)
+    series.forEach((s) => loadData(s, newRange))
+  }, [series, loadData])
+
+  const anyLoading = series.some((s) => s.loading)
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <div className="flex h-screen bg-gray-950 text-gray-100 overflow-hidden">
+      <SeriesPanel
+        series={series}
+        onAdd={handleAdd}
+        onRemove={handleRemove}
+        onToggleVisible={handleToggleVisible}
+        onToggleAxis={handleToggleAxis}
+        onToggleNormalize={handleToggleNormalize}
+        onColorChange={handleColorChange}
+        onChartTypeChange={handleChartTypeChange}
+      />
+
+      <main className="flex-1 flex flex-col overflow-hidden">
+        <header className="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-semibold text-white">圖表疊加工具</h1>
+            {anyLoading && <span className="text-xs text-gray-400 animate-pulse">載入中…</span>}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setNormalizeAll((v) => !v)}
+              className={`text-sm px-3 py-1.5 rounded-lg transition-colors border
+                ${normalizeAll
+                  ? 'bg-green-700/40 border-green-600 text-green-300'
+                  : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600'}`}
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+              {normalizeAll ? '% 相對變化' : '原始數值'}
+            </button>
+
+            <div className="flex gap-1">
+              {(Object.keys(DATE_RANGE_LABELS) as DateRange[]).map((r) => (
+                <button key={r} onClick={() => handleRangeChange(r)}
+                  className={`text-sm px-3 py-1.5 rounded-lg transition-colors
+                    ${range === r ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'}`}
+                >
+                  {DATE_RANGE_LABELS[r]}
+                </button>
+              ))}
+            </div>
+          </div>
+        </header>
+
+        <div className="flex-1 p-6 min-h-0">
+          <ChartOverlay series={series} normalizeAll={normalizeAll} />
         </div>
       </main>
     </div>
-  );
+  )
 }
