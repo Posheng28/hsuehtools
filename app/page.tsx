@@ -166,13 +166,14 @@ export default function Home() {
       `}>
         <SeriesPanel
           series={series}
-          onAdd={(cfg) => { handleAdd(cfg); setSidebarOpen(false) }}
+          onAdd={handleAdd}
           onRemove={handleRemove}
           onToggleVisible={handleToggleVisible}
           onToggleAxis={handleToggleAxis}
           onToggleNormalize={handleToggleNormalize}
           onColorChange={handleColorChange}
           onChartTypeChange={handleChartTypeChange}
+          onClose={() => setSidebarOpen(false)}
         />
       </div>
 
