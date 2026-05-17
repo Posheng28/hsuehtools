@@ -39,6 +39,7 @@ export const PRESET_GROUPS: PresetGroup[] = [
       { id: 'SP500',  label: 'S&P 500',    type: 'stocks', ticker: '^spx', color: '#4ade80', axis: 'left' },
       { id: 'NASDAQ', label: 'Nasdaq 100', type: 'stocks', ticker: '^ndq', color: '#60a5fa', axis: 'left' },
       { id: 'DOW',    label: 'Dow Jones',  type: 'stocks', ticker: '^dji', color: '#f59e0b', axis: 'left' },
+      { id: 'SOX',    label: '費城半導體 (SOXX)', type: 'stocks', ticker: 'soxx', color: '#a78bfa', axis: 'left' },
     ],
   },
   {
