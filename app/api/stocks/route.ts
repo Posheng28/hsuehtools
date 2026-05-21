@@ -7,19 +7,23 @@ function yahooRange(range: string): string {
   return '2y'
 }
 
-// Returns list of Yahoo tickers to try in order
 function candidateTickers(ticker: string): string[] {
   const t = ticker.trim().toUpperCase()
-  // 4-digit Taiwan stock number → try .TW (上市) then .TWO (上櫃)
   if (/^\d{4}$/.test(t)) return [`${t}.TW`, `${t}.TWO`]
-  // Already has exchange suffix (.TW / .TWO / .T / etc.) — pass through
   if (t.includes('.')) return [t]
-  // Everything else (US stocks, indices) — pass through
   return [t]
 }
 
-async function fetchYahoo(symbol: string, range: string) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${yahooRange(range)}`
+async function fetchYahoo(symbol: string, params: { range?: string; from?: string; to?: string }) {
+  let url: string
+  if (params.from && params.to) {
+    const p1 = Math.floor(new Date(params.from + 'T00:00:00Z').getTime() / 1000)
+    const p2 = Math.floor(new Date(params.to   + 'T23:59:59Z').getTime() / 1000)
+    url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&period1=${p1}&period2=${p2}`
+  } else {
+    url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=${yahooRange(params.range ?? '2Y')}`
+  }
+
   const res = await fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
   })
@@ -48,17 +52,21 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const ticker = searchParams.get('ticker')
   const range  = searchParams.get('range') || '2Y'
+  const from   = searchParams.get('from') ?? undefined
+  const to     = searchParams.get('to')   ?? undefined
 
   if (!ticker) return NextResponse.json({ error: 'Missing ticker' }, { status: 400 })
 
   const candidates = candidateTickers(ticker)
-  const cacheKey   = `stocks:${candidates[0]}:${range}`
+  const cacheKey   = from && to
+    ? `stocks:${candidates[0]}:${from}:${to}`
+    : `stocks:${candidates[0]}:${range}`
   const hit = getCached(cacheKey)
   if (hit) return NextResponse.json({ data: hit, cached: true })
 
   try {
     for (const symbol of candidates) {
-      const data = await fetchYahoo(symbol, range)
+      const data = await fetchYahoo(symbol, { range, from, to })
       if (data) {
         setCached(cacheKey, data, 30 * 60 * 1000)
         return NextResponse.json({ data })

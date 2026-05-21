@@ -109,3 +109,16 @@ export const COLORS = [
 export const CHART_TYPE_LABELS: Record<ChartType, string> = {
   line: '折線', area: '面積', bar: '長棒',
 }
+
+export interface PeriodSegment {
+  id: string
+  ticker: string
+  label: string
+  from: string   // YYYY-MM-DD
+  to: string     // YYYY-MM-DD
+  color: string
+  visible: boolean
+  data: { date: string; value: number }[]
+  loading: boolean
+  error?: string
+}
