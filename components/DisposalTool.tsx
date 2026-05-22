@@ -77,6 +77,12 @@ function lastTD(dateStr: string): string {
   while (d.getDay()===0 || d.getDay()===6) d.setDate(d.getDate()-1)
   return fmtISO(d)
 }
+// 「下一個交易日」（嚴格往後找；週五/週末 → 下週一）— 預測目標日
+function nextTD(dateStr: string): string {
+  const d = parseD(dateStr)
+  do { d.setDate(d.getDate()+1) } while (d.getDay()===0 || d.getDay()===6)
+  return fmtISO(d)
+}
 
 const calcISO = (day: DayEntry) => fmtISO(addTD(day.baseDateStr, OFFSET))
 const calcMD  = (day: DayEntry) => fmtMMDD(addTD(day.baseDateStr, OFFSET))
@@ -254,75 +260,35 @@ function computeTriggers(
 }
 
 /**
- * getRules: 計算目前規則進度（用於底部計數卡）
- * resetDate: 以此日為起算點（可來自 baseReset 或模擬觸發點）
+ * getRules: 計算「已確定」規則進度（用於底部計數卡）
+ * 只計入真實注意紀錄（不含沙盤模擬），窗口結尾固定為最近交易日 ref。
+ * resetDate: 處置生效日（confirmed），自此日起算。
  */
 function getRules(
-  days: DayEntry[],
-  sp: (number|null)[],
   pastNotices: PastNotice[],
-  mkt: Market,
+  ref: string,
   resetDate?: string,
 ) {
-  const filtPN = resetDate
-    ? pastNotices.filter(p => p.dateStr >= resetDate)
-    : pastNotices
+  const filtPN = resetDate ? pastNotices.filter(p => p.dateStr >= resetDate) : pastNotices
+  const nm = new Map(filtPN.map(p => [p.dateStr, p.level as 1 | 2]))
 
-  const notices: (0|1|2)[] = []
-  for (let i = 0; i < days.length; i++) {
-    if (sp[i] === null) break
-    const cd = calcISO(days[i])
-    if (resetDate && cd < resetDate) continue
-    notices.push(nLvl(sp[i]!, days[i].bp, mkt))
-  }
-
-  const nm0 = new Map(filtPN.map(p => [p.dateStr, p.level as 0|1|2]))
-  const prior: (0|1|2)[] = []
-  const anchor = resetDate ?? (days.length ? calcISO(days[0]) : null)
-  if (anchor) {
-    const dd = parseD(anchor)
-    for (let i = 0; i < 30; i++) {
-      dd.setDate(dd.getDate()-1)
-      while (dd.getDay()===0||dd.getDay()===6) dd.setDate(dd.getDate()-1)
-      const ds = fmtISO(new Date(dd))
+  // 連續 streak：從 ref 往回逐個交易日（僅確定注意）
+  // 第一款 = level 1（歷史 level 2 = 款二～八，不計入規則①）
+  let c1 = 0, ca = 0
+  {
+    let brokeC1 = false, brokeCa = false
+    const d = parseD(ref)
+    for (let i = 0; i < 60 && !(brokeC1 && brokeCa); i++) {
+      const ds = fmtISO(d)
       if (resetDate && ds < resetDate) break
-      const lv = nm0.get(ds) ?? 0
-      if (!lv) break
-      prior.unshift(lv as 0|1|2)
+      const lv = nm.get(ds) ?? 0
+      if (!brokeCa) { if (lv > 0)  ca++; else brokeCa = true }
+      if (!brokeC1) { if (lv === 1) c1++; else brokeC1 = true }
+      do { d.setDate(d.getDate() - 1) } while (d.getDay() === 0 || d.getDay() === 6)
     }
   }
 
-  const all = [...prior, ...notices]; const pL = prior.length; let c1 = 0, ca = 0
-  for (let i = 0; i < all.length; i++) {
-    const n = all[i]
-    const isPast = i < pL
-    // 模擬日 level1/2 皆款一(計入規則①)；歷史 level2=款二～八(不計入規則①)
-    const isFirst = isPast ? (n === 1) : (n >= 1)
-    c1 = isFirst ? c1 + 1 : 0
-    ca = (n >= 1) ? ca + 1 : 0
-  }
-
-  const nm = new Map(filtPN.map(p => [p.dateStr, p.level as 0|1|2]))
-  for (let i = 0; i < days.length; i++) {
-    const cd = calcISO(days[i])
-    if (resetDate && cd < resetDate) continue
-    if (sp[i] !== null) nm.set(cd, nLvl(sp[i]!, days[i].bp, mkt))
-  }
-  let ref = lastTD(fmtISO(new Date()))   // 今天若為週末，退到最近交易日
-  for (let i = days.length-1; i >= 0; i--) {
-    if (sp[i] !== null) {
-      const sd = calcISO(days[i])
-      if (resetDate && sd < resetDate) continue
-      if (sd > ref) ref = sd
-      break
-    }
-  }
-  const c10 = tdBetween(subTD(ref, 9),  ref)
-    .filter(d => (!resetDate || d >= resetDate) && (nm.get(d)??0) > 0).length
-  const c30 = tdBetween(subTD(ref, 29), ref)
-    .filter(d => (!resetDate || d >= resetDate) && (nm.get(d)??0) > 0).length
-
-  // 每條規則的窗口範圍 + 該窗口內「已確定」的注意日期（來自歷史注意紀錄）
+  // 窗口範圍 + 窗口內確定注意日期；count = 窗口內確定注意數
   const mkWin = (n: number) => {
     let from = subTD(ref, n - 1)
     if (resetDate && from < resetDate) from = resetDate
@@ -330,21 +296,24 @@ function getRules(
       .filter(p => p.dateStr >= from && p.dateStr <= ref)
       .map(p => p.dateStr)
       .sort()
-    return { from, to: ref, confirmed }
+    return { from, to: ref, confirmed, count: confirmed.length }
   }
   const windows = { r1: mkWin(3), r2: mkWin(5), r3: mkWin(10), r4: mkWin(30) }
 
-  return { c1, ca, c10, c30, maxC30: 12, ref, windows }
+  return { c1, ca, c10: windows.r3.count, c30: windows.r4.count, maxC30: 12, ref, windows }
 }
 
 /* ── Component ─────────────────────────────────────────────────────────────── */
 export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
-  const today   = fmtISO(new Date())
-  const todayTD = lastTD(today)   // 最近交易日（週末退到上週五），用於窗口/顯示
+  const today      = fmtISO(new Date())
+  const todayTD    = lastTD(today)        // 最近(已過)交易日，用於 30 日處置判定
+  const predictDay = nextTD(todayTD)      // 下一個交易日 = 預測目標日，規則窗口結尾
 
   /* ── State ── */
   const [days,        setDays]        = useState<DayEntry[]>(defaultDays)
   const [simPrices,   setSimPrices]   = useState<(number|null)[]>(() => defaultDays().map(() => null))
+  // 數字輸入框編輯中的原始字串（key=日索引），離開欄位才校正
+  const [editStr,     setEditStr]     = useState<Record<number, string>>({})
   const [pastNotices, setPastNotices] = useState<PastNotice[]>([])
   const nextId = useRef(1)
 
@@ -582,20 +551,29 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   }
   const resetSim = () => setSimPrices(days.map(() => null))
 
-  const onNumInput = (idx: number, raw: string) => {
-    const { minP, maxP } = getDayBounds(idx, spRef.current, daysRef.current)
-    let val = parseFloat(raw); if (isNaN(val)) return
-    val = snapTick(val)
-    val = Math.max(minP, Math.min(maxP, val))
-    setSimPrices(prev => { const n = [...prev]; n[idx] = val; return n })
+  // 打字時自由輸入（存原始字串），離開欄位(blur)才校正到 tick 並夾在漲跌停內
+  const onNumFocus = (idx: number) => {
+    const v = spRef.current[idx]
+    setEditStr(prev => ({ ...prev, [idx]: v === null ? '' : fNum(v) }))
+  }
+  const onNumChange = (idx: number, raw: string) => {
+    setEditStr(prev => ({ ...prev, [idx]: raw }))
   }
   const onNumBlur = (idx: number) => {
+    const raw = editStr[idx]
+    setEditStr(prev => { const n = { ...prev }; delete n[idx]; return n })
+    if (raw === undefined || raw.trim() === '') return
+    const parsed = parseFloat(raw)
+    if (isNaN(parsed)) return
     setSimPrices(prev => {
       const n = [...prev], ds = daysRef.current
+      const { minP, maxP } = getDayBounds(idx, n, ds)
+      n[idx] = Math.max(minP, Math.min(maxP, snapTick(parsed)))
+      // 重新夾住後續已設定的日子（前一日變動會改變漲跌停範圍）
       for (let j = idx+1; j < n.length; j++) {
         if (n[j] === null) break
-        const { minP, maxP } = getDayBounds(j, n, ds)
-        n[j] = Math.max(minP, Math.min(maxP, n[j]!))
+        const b = getDayBounds(j, n, ds)
+        n[j] = Math.max(b.minP, Math.min(b.maxP, n[j]!))
       }
       return n
     })
@@ -628,18 +606,11 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
     notices.push(nLvl(simPrices[i]!, days[i].bp, market))
   }
 
-  // 模擬是否觸發處置（以 baseReset 為起算）
+  // 模擬是否觸發處置（以 baseReset 為起算）— 用於下方「此路徑安全/觸發」結果列
   const simResult = notices.length > 0 ? computeTriggers(notices, days, pastNotices, baseReset) : null
 
-  // 模擬觸發的處置日（比 baseReset 更晚時才有意義）
-  const simResetDate = simResult?.disposed && simResult.trigIdx >= 0
-    ? calcISO(days[simResult.trigIdx]) : undefined
-
-  // 最終 resetDate：模擬觸發 > 歷史處置
-  const effectiveReset = simResetDate ?? baseReset
-
-  // 規則計數（以 effectiveReset 為起算）
-  const rules = getRules(days, simPrices, pastNotices, market, effectiveReset)
+  // 規則計數：只算「已確定」注意，窗口結尾 = 下一個交易日(預測目標)，起算用確定處置日 baseReset
+  const rules = getRules(pastNotices, predictDay, baseReset)
 
   // 過濾後的注意記錄（sidebar 顯示用）
   // 只顯示「正在被計數」的那個窗口：有處置→從處置日起，沒有→最近30交易日
@@ -885,9 +856,11 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
             </div>
 
             <input
-              type="number" value={isUnset ? fNum(dispPrice) : fNum(chosen!)}
+              type="number"
+              value={editStr[i] !== undefined ? editStr[i] : (isUnset ? fNum(dispPrice) : fNum(chosen!))}
               step={tickOf(dispPrice)} min={minP} max={maxP} disabled={prevUnset}
-              onChange={e => onNumInput(i, e.target.value)}
+              onFocus={() => onNumFocus(i)}
+              onChange={e => onNumChange(i, e.target.value)}
               onBlur={() => onNumBlur(i)}
               onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
               className="w-full text-center text-2xl font-extrabold bg-transparent border-b-2 border-transparent focus:outline-none focus:border-blue-500 focus:bg-blue-950/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -946,10 +919,13 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   /* ── Rules status ─────────────────────────────────────────────────────────── */
   const rulesGrid = (
     <div className="space-y-2 mt-3">
-      {effectiveReset && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-orange-950/40 border border-orange-700 rounded-lg text-xs text-orange-300">
-          <span>🔄</span>
-          <span>從 <b>{effectiveReset}</b> 起算（{simResetDate ? '模擬觸發' : '處置生效日'}）</span>
+      <div className="text-sm text-gray-400 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span>📊 以下為「已確定注意紀錄」的處置進度（不含沙盤模擬），窗口結尾 = 下一個交易日 <b className="text-gray-200">{rules.ref.slice(5)}</b>（預測目標）</span>
+      </div>
+      {baseReset && (
+        <div className="flex items-center gap-2 px-3 py-2.5 bg-orange-950/40 border border-orange-700 rounded-lg text-sm text-orange-300">
+          <span className="text-base">🔄</span>
+          <span>從 <b>{baseReset}</b> 起算（處置生效日）</span>
         </div>
       )}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1052,24 +1028,24 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
             if (!focusDay) return null
             const { t1, t2 } = thresh(focusDay.bp, market)
             return (
-              <div className="p-3 rounded-xl bg-gray-900 border border-gray-700 flex flex-wrap items-center gap-x-6 gap-y-1">
+              <div className="p-3 rounded-xl bg-gray-900 border border-gray-700 flex flex-wrap items-center gap-x-6 gap-y-1.5">
                 <div className="flex items-center gap-2">
-                  <span className="text-gray-300 font-bold text-sm">📅 {calcMD(focusDay)} 計算日</span>
-                  <span className="text-gray-600 text-xs">基準 {baseMD(focusDay)} / {fNum(focusDay.bp)}</span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${market === 'TWSE' ? 'bg-blue-950 text-blue-400 border border-blue-800' : 'bg-purple-950 text-purple-400 border border-purple-800'}`}>
+                  <span className="text-gray-200 font-bold text-base">📅 {calcMD(focusDay)} 計算日</span>
+                  <span className="text-gray-500 text-sm">基準 {baseMD(focusDay)} / {fNum(focusDay.bp)}</span>
+                  <span className={`text-xs px-1.5 py-0.5 rounded font-semibold ${market === 'TWSE' ? 'bg-blue-950 text-blue-400 border border-blue-800' : 'bg-purple-950 text-purple-400 border border-purple-800'}`}>
                     {market === 'TWSE' ? '上市 32/25%' : '上櫃 30/23%'}
                   </span>
                 </div>
                 <div className="flex items-center gap-4">
-                  <span className="text-xs">
-                    <span className="text-gray-500">款一① ≥ </span>
-                    <b className="text-red-400 text-sm">{fNum(t1)}</b>
+                  <span className="text-sm">
+                    <span className="text-gray-400">款一① ≥ </span>
+                    <b className="text-red-400 text-base">{fNum(t1)}</b>
                   </span>
-                  <span className="text-xs">
-                    <span className="text-gray-500">款一② ≥ </span>
-                    <b className="text-red-300 text-sm">{fNum(t2)}</b>
+                  <span className="text-sm">
+                    <span className="text-gray-400">款一② ≥ </span>
+                    <b className="text-red-300 text-base">{fNum(t2)}</b>
                   </span>
-                  <span className="text-xs text-green-600">安全線 &lt; {fNum(t2)}</span>
+                  <span className="text-sm text-green-500">安全線 &lt; {fNum(t2)}</span>
                 </div>
               </div>
             )
@@ -1099,17 +1075,17 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                     </span>
                   )}
                 </div>
-                <div className="text-xs mt-1.5">
+                <div className="text-sm mt-2">
                   {state === 'hit' && (
-                    <span className="text-gray-500">※ 尚未納入「差幅 ≥ 大盤/類股」條件，此為價格面上限判斷</span>
+                    <span className="text-gray-400">※ 尚未納入「差幅 ≥ 大盤/類股」條件，此為價格面上限判斷</span>
                   )}
                   {state === 'exempt' && (
-                    <span className="text-sky-200/80">
-                      豁免理由：30 日內已有第一款注意，且最近 6 日累積漲幅 {clause2.sixDayPct?.toFixed(1)}% ≤ {CLAUSE2[market].dupPct}%（{market === 'TWSE' ? '上市' : '上櫃'}）
+                    <span className="text-sky-200">
+                      豁免理由：30 日內已有第一款注意，且最近 6 日累積漲幅 <b>{clause2.sixDayPct?.toFixed(1)}%</b> ≤ {CLAUSE2[market].dupPct}%（{market === 'TWSE' ? '上市' : '上櫃'}）
                     </span>
                   )}
                   {state === 'clear' && (
-                    <span className="text-gray-500">30/60/90 日起迄漲幅皆未達倍漲門檻</span>
+                    <span className="text-gray-400">30/60/90 日起迄漲幅皆未達倍漲門檻</span>
                   )}
                 </div>
               </div>
@@ -1117,12 +1093,12 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           })()}
 
           <div>
-            <h2 className="text-sm font-bold text-gray-200 mb-1">🎮 互動沙盤 — 拖拉股價滑桿模擬走勢</h2>
-            <p className="text-xs text-gray-500">
-              <span className="text-red-400">🔴 款一①</span>（純價格）
-              <span className="mx-1 text-red-400">🔴 款一②</span>（價格+起迄價差）
-              <span className="mx-1 text-green-500">🟢 無注意</span>
-              <span className="ml-1 text-gray-600">兩者皆屬第一款，連3日即處置</span>
+            <h2 className="text-base font-bold text-gray-200 mb-1">🎮 互動沙盤 — 拖拉股價滑桿模擬走勢</h2>
+            <p className="text-sm text-gray-400">
+              <span className="text-red-400 font-semibold">🔴 款一①</span>（純價格）
+              <span className="mx-1 text-red-400 font-semibold">🔴 款一②</span>（價格+起迄價差）
+              <span className="mx-1 text-green-400 font-semibold">🟢 無注意</span>
+              <span className="ml-1 text-gray-500">兩者皆屬第一款，連3日即處置</span>
             </p>
           </div>
 
