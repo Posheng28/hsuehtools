@@ -21,6 +21,16 @@ export function setCached(key: string, data: unknown, ttlMs = 30 * 60 * 1000): v
   store.set(key, { data, expiry: Date.now() + ttlMs })
 }
 
+export function deleteCache(key: string): void {
+  store.delete(key)
+}
+
+export function deleteCachePrefix(prefix: string): void {
+  for (const k of store.keys()) {
+    if (k.startsWith(prefix)) store.delete(k)
+  }
+}
+
 // Per-source request throttle: enforce minimum interval between calls
 const lastRequestTime: Record<string, number> = {}
 

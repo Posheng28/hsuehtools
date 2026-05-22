@@ -2,8 +2,9 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import dynamic from 'next/dynamic'
-import SeriesPanel from '@/components/SeriesPanel'
-import PeriodPanel from '@/components/PeriodPanel'
+import SeriesPanel  from '@/components/SeriesPanel'
+import PeriodPanel  from '@/components/PeriodPanel'
+import DisposalTool from '@/components/DisposalTool'
 import { SeriesConfig, DateRange, DATE_RANGE_LABELS, ChartType, PeriodSegment, COLORS } from '@/lib/types'
 
 const ChartOverlay = dynamic(() => import('@/components/ChartOverlay'), { ssr: false })
@@ -75,7 +76,7 @@ async function fetchSegment(seg: SegSaved) {
 
 // ─────────────────────────────────────────────────────────────────────────
 export default function Home() {
-  const [mode, setMode] = useState<'overlay' | 'period'>('overlay')
+  const [mode, setMode] = useState<'overlay' | 'period' | 'disposal'>('overlay')
 
   // ── Overlay state ──
   const [series, setSeries]             = useState<SeriesConfig[]>([])
@@ -176,18 +177,20 @@ export default function Home() {
         <div className="fixed inset-0 bg-black/60 z-20 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
-      <div className={`fixed inset-y-0 left-0 z-30 flex transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 lg:z-auto ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        {mode === 'overlay' ? (
-          <SeriesPanel series={series} onAdd={handleAdd} onRemove={handleRemove}
-            onToggleVisible={handleToggleVisible} onToggleAxis={handleToggleAxis}
-            onToggleNormalize={handleToggleNormalize} onColorChange={handleColorChange}
-            onChartTypeChange={handleChartTypeChange} onClose={() => setSidebarOpen(false)} />
-        ) : (
-          <PeriodPanel segments={segments} onAdd={handleAddSegment} onRemove={handleRemoveSegment}
-            onToggleVisible={handleToggleSegmentVisible} onColorChange={handleSegmentColorChange}
-            onClose={() => setSidebarOpen(false)} />
-        )}
-      </div>
+      {mode !== 'disposal' && (
+        <div className={`fixed inset-y-0 left-0 z-30 flex transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 lg:z-auto ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+          {mode === 'overlay' ? (
+            <SeriesPanel series={series} onAdd={handleAdd} onRemove={handleRemove}
+              onToggleVisible={handleToggleVisible} onToggleAxis={handleToggleAxis}
+              onToggleNormalize={handleToggleNormalize} onColorChange={handleColorChange}
+              onChartTypeChange={handleChartTypeChange} onClose={() => setSidebarOpen(false)} />
+          ) : (
+            <PeriodPanel segments={segments} onAdd={handleAddSegment} onRemove={handleRemoveSegment}
+              onToggleVisible={handleToggleSegmentVisible} onColorChange={handleSegmentColorChange}
+              onClose={() => setSidebarOpen(false)} />
+          )}
+        </div>
+      )}
 
       <main className="flex-1 flex flex-col overflow-hidden min-w-0">
         <header className="flex items-center justify-between px-3 py-2 border-b border-gray-800 shrink-0 gap-2">
@@ -210,10 +213,15 @@ export default function Home() {
                 className={`text-xs px-3 py-1.5 transition-colors ${mode === 'period' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}>
                 時段比較
               </button>
+              <button onClick={() => setMode('disposal')}
+                className={`text-xs px-3 py-1.5 transition-colors ${mode === 'disposal' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}>
+                注意/處置
+              </button>
             </div>
 
             {anyLoading && mode === 'overlay' && <span className="text-xs text-gray-400 animate-pulse">載入中…</span>}
             {segments.some((s) => s.loading) && mode === 'period' && <span className="text-xs text-gray-400 animate-pulse">載入中…</span>}
+            {mode === 'disposal' && <span className="text-xs text-orange-400/70">台股注意 / 處置推演</span>}
           </div>
 
           <div className="flex items-center gap-1.5 flex-wrap justify-end">
@@ -242,10 +250,20 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="flex-1 p-2 min-h-0">
-          {mode === 'overlay'
-            ? <ChartOverlay series={series} normalizeAll={normalizeAll} />
-            : <PeriodChart  segments={segments} />}
+        <div className="flex-1 min-h-0 overflow-hidden">
+          {mode === 'overlay' && (
+            <div className="p-2 h-full">
+              <ChartOverlay series={series} normalizeAll={normalizeAll} />
+            </div>
+          )}
+          {mode === 'period' && (
+            <div className="p-2 h-full">
+              <PeriodChart segments={segments} />
+            </div>
+          )}
+          {mode === 'disposal' && (
+            <DisposalTool sidebarOpen={sidebarOpen} onCloseSidebar={() => setSidebarOpen(false)} />
+          )}
         </div>
       </main>
 
