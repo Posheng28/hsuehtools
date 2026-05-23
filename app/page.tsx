@@ -164,6 +164,20 @@ export default function Home() {
     setSegments((prev) => prev.map((s) => s.id === seg.id ? { ...s, data, loading: false, error } : s))
   }, [])
 
+  const handleUpdateSegment = useCallback(async (id: string, patch: Partial<SegSaved>) => {
+    const cur = segments.find((s) => s.id === id)
+    if (!cur) return
+    const needRefetch = 'ticker' in patch || 'from' in patch || 'to' in patch
+    const merged = { ...cur, ...patch }
+    setSegments((prev) => prev.map((s) => s.id === id
+      ? { ...merged, data: s.data, loading: needRefetch, error: needRefetch ? undefined : s.error }
+      : s))
+    if (needRefetch) {
+      const { data, error } = await fetchSegment(merged)
+      setSegments((prev) => prev.map((s) => s.id === id ? { ...s, data, loading: false, error } : s))
+    }
+  }, [segments])
+
   const handleRemoveSegment        = useCallback((id: string) => setSegments((prev) => prev.filter((s) => s.id !== id)), [])
   const handleToggleSegmentVisible = useCallback((id: string) => setSegments((prev) => prev.map((s) => s.id === id ? { ...s, visible: !s.visible } : s)), [])
   const handleSegmentColorChange   = useCallback((id: string, color: string) => setSegments((prev) => prev.map((s) => s.id === id ? { ...s, color } : s)), [])
@@ -187,7 +201,7 @@ export default function Home() {
           ) : (
             <PeriodPanel segments={segments} onAdd={handleAddSegment} onRemove={handleRemoveSegment}
               onToggleVisible={handleToggleSegmentVisible} onColorChange={handleSegmentColorChange}
-              onClose={() => setSidebarOpen(false)} />
+              onUpdate={handleUpdateSegment} onClose={() => setSidebarOpen(false)} />
           )}
         </div>
       )}

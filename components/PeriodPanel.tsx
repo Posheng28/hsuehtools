@@ -9,6 +9,7 @@ interface Props {
   onRemove: (id: string) => void
   onToggleVisible: (id: string) => void
   onColorChange: (id: string, color: string) => void
+  onUpdate: (id: string, patch: Partial<Omit<PeriodSegment, 'data' | 'loading' | 'error'>>) => void
   onClose?: () => void
 }
 
@@ -18,7 +19,7 @@ const HISTORY_KEY = 'period_history_v1'
 const MAX_HISTORY = 15
 const histKey = (h: { ticker: string; from: string; to: string }) => `${h.ticker}|${h.from}|${h.to}`
 
-export default function PeriodPanel({ segments, onAdd, onRemove, onToggleVisible, onColorChange, onClose }: Props) {
+export default function PeriodPanel({ segments, onAdd, onRemove, onToggleVisible, onColorChange, onUpdate, onClose }: Props) {
   const today = new Date().toISOString().split('T')[0]
   const currentYear = new Date().getFullYear()
   const [ticker, setTicker]   = useState('')
@@ -53,6 +54,38 @@ export default function PeriodPanel({ segments, onAdd, onRemove, onToggleVisible
   const years = Array.from({ length: 12 }, (_, i) => currentYear - i)
 
   const nextColor = () => COLORS[segments.length % COLORS.length]
+
+  // ── 卡片行內編輯 / 複製 ──
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState({ ticker: '', label: '', from: '', to: '' })
+  const [editErr, setEditErr] = useState<string | null>(null)
+
+  const startEdit = (s: { ticker: string; label: string; from: string; to: string }, id: string) => {
+    setDraft({ ticker: s.ticker, label: s.label, from: s.from, to: s.to })  // 預填現有值，不清空
+    setEditErr(null)
+    setEditingId(id)
+  }
+  const cancelEdit = () => { setEditingId(null); setEditErr(null) }
+
+  const saveEdit = (id: string) => {
+    const t = draft.ticker.trim().toUpperCase()
+    if (!t)                    { setEditErr('請輸入代碼'); return }
+    if (!draft.from)           { setEditErr('請選擇開始日期'); return }
+    if (!draft.to)             { setEditErr('請選擇結束日期'); return }
+    if (draft.from >= draft.to){ setEditErr('結束日期必須晚於開始日期'); return }
+    const finalLabel = draft.label.trim() || `${t} ${draft.from}～${draft.to}`
+    onUpdate(id, { ticker: t, label: finalLabel, from: draft.from, to: draft.to })
+    pushHistory({ ticker: t, label: draft.label.trim(), from: draft.from, to: draft.to })
+    setEditingId(null)
+    setEditErr(null)
+  }
+
+  // 複製：沿用同標的/名稱/時間，產生新卡，並立刻進入編輯（游標預填，方便只改時間或標的）
+  const handleDuplicate = (s: PeriodSegment) => {
+    const id = `period_${s.ticker}_${s.from}_${Date.now()}`
+    onAdd({ id, ticker: s.ticker, label: s.label, from: s.from, to: s.to, color: nextColor(), visible: true })
+    startEdit(s, id)
+  }
 
   const handleAdd = () => {
     const t = ticker.trim().toUpperCase()
@@ -177,7 +210,39 @@ export default function PeriodPanel({ segments, onAdd, onRemove, onToggleVisible
         <p className="text-sm text-gray-500 text-center py-8">新增時段後會顯示在這裡</p>
       ) : (
         <div className="flex flex-col gap-2">
-          {segments.map((s) => (
+          {segments.map((s) => editingId === s.id ? (
+            /* ── 編輯模式（預填現有值）── */
+            <div key={s.id} className="bg-gray-900 border border-blue-600/60 rounded-lg p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <input type="color" value={s.color} onChange={(e) => onColorChange(s.id, e.target.value)}
+                  className="w-5 h-5 rounded cursor-pointer bg-transparent border-0 p-0 shrink-0" />
+                <input type="text" autoFocus placeholder="代碼" value={draft.ticker}
+                  onChange={(e) => setDraft((d) => ({ ...d, ticker: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(s.id); if (e.key === 'Escape') cancelEdit() }}
+                  className="flex-1 min-w-0 bg-gray-800 text-gray-200 text-sm rounded px-2 py-1.5 border border-gray-700 focus:outline-none focus:border-blue-500" />
+              </div>
+              <input type="text" placeholder="名稱（選填）" value={draft.label}
+                onChange={(e) => setDraft((d) => ({ ...d, label: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(s.id); if (e.key === 'Escape') cancelEdit() }}
+                className="w-full bg-gray-800 text-gray-200 text-sm rounded px-2 py-1.5 border border-gray-700 focus:outline-none focus:border-blue-500" />
+              <div className="flex gap-2">
+                <input type="date" value={draft.from} max={today}
+                  onChange={(e) => setDraft((d) => ({ ...d, from: e.target.value }))}
+                  className="flex-1 min-w-0 bg-gray-800 text-gray-200 text-sm rounded px-2 py-1.5 border border-gray-700 focus:outline-none focus:border-blue-500" />
+                <input type="date" value={draft.to} max={today}
+                  onChange={(e) => setDraft((d) => ({ ...d, to: e.target.value }))}
+                  className="flex-1 min-w-0 bg-gray-800 text-gray-200 text-sm rounded px-2 py-1.5 border border-gray-700 focus:outline-none focus:border-blue-500" />
+              </div>
+              {editErr && <p className="text-sm text-red-400">{editErr}</p>}
+              <div className="flex gap-2">
+                <button onClick={() => saveEdit(s.id)}
+                  className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded py-1.5 transition-colors">完成</button>
+                <button onClick={cancelEdit}
+                  className="px-3 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded py-1.5 transition-colors">取消</button>
+              </div>
+            </div>
+          ) : (
+            /* ── 顯示模式 ── */
             <div key={s.id} className="bg-gray-900 border border-gray-800 rounded-lg p-3">
               <div className="flex items-start gap-2">
                 <input type="color" value={s.color} onChange={(e) => onColorChange(s.id, e.target.value)}
@@ -193,6 +258,14 @@ export default function PeriodPanel({ segments, onAdd, onRemove, onToggleVisible
                     <p className="text-sm text-gray-600 mt-0.5">{s.data.length} 個交易日</p>
                   )}
                 </div>
+                <button onClick={() => startEdit(s, s.id)} title="編輯（標的／名稱／時間）"
+                  className="shrink-0 w-6 h-6 flex items-center justify-center text-gray-400 hover:text-blue-400 text-sm transition-colors">
+                  ✎
+                </button>
+                <button onClick={() => handleDuplicate(s)} title="複製此卡片並編輯"
+                  className="shrink-0 w-6 h-6 flex items-center justify-center text-gray-400 hover:text-green-400 text-sm transition-colors">
+                  ⧉
+                </button>
                 <button onClick={() => onToggleVisible(s.id)}
                   className="shrink-0 w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-200 text-sm transition-colors">
                   {s.visible === false ? '🙈' : '👁'}
