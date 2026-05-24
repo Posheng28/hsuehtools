@@ -36,7 +36,7 @@ export default function ChipsView() {
   const [input, setInput]     = useState('')
   const [data, setData]       = useState<ChipsResp | null>(null)
   const [price, setPrice]     = useState<number | null>(null)
-  const [foreignPct, setForeignPct] = useState<number | null>(null) // 外資持股%（官方·最新週）
+  const [foreignByDate, setForeignByDate] = useState<Record<string, number | null>>({}) // 逐週外資持股%（官方）
   const [subForeign, setSubForeign] = useState(true)                // 是否扣外資
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState<string | null>(null)
@@ -55,7 +55,7 @@ export default function ChipsView() {
   const query = useCallback(async (raw: string) => {
     const code = raw.trim()
     if (!/^\d{4}$/.test(code)) { setError('請輸入 4 位數台股代號'); return }
-    setLoading(true); setError(null); setForeignPct(null)
+    setLoading(true); setError(null); setForeignByDate({})
     try {
       const [cRes, sRes] = await Promise.all([
         fetch(`/api/chips?ticker=${code}`),
@@ -69,11 +69,11 @@ export default function ChipsView() {
         const arr = sJson.data as { value: number }[] | undefined
         setPrice(arr && arr.length ? arr[arr.length - 1].value : null)
       } catch { setPrice(null) }
-      // 外資持股%（以最新週日期查官方 MI_QFIIS）
-      const lastDate = cJson.series?.length ? cJson.series[cJson.series.length - 1].date : null
-      if (lastDate) {
-        try { const fJson = await (await fetch(`/api/foreign?ticker=${code}&date=${lastDate}`)).json(); setForeignPct(fJson.foreignPct ?? null) }
-        catch { setForeignPct(null) }
+      // 逐週外資持股%（官方 MI_QFIIS，全市場 per-date 快取）
+      const dates = (cJson.series ?? []).map((w: { date: string }) => w.date)
+      if (dates.length) {
+        try { const fJson = await (await fetch(`/api/foreign?ticker=${code}&dates=${dates.join(',')}`)).json(); setForeignByDate(fJson.foreign ?? {}) }
+        catch { setForeignByDate({}) }
       }
     } catch {
       setError('查詢失敗，請稍後再試')
@@ -92,28 +92,33 @@ export default function ChipsView() {
       rightPriceScale: { borderColor: '#374151' },
     })
     chartRef.current = chart
-    seriesRef.current = chart.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 2, priceFormat: { type: 'custom', formatter: (v: number) => `${v.toFixed(1)}%` } })
+    seriesRef.current = chart.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 2, priceFormat: { type: 'custom', minMove: 0.01, formatter: (v: number) => `${v.toFixed(2)}%` } })
     const ro = new ResizeObserver(([e]) => chart.applyOptions({ width: e.contentRect.width, height: e.contentRect.height }))
     ro.observe(containerRef.current)
     return () => { ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null }
   }, [])
 
-  // 依資料 + 門檻 + 扣外資 重繪
+  // 依資料 + 門檻 + 逐週扣外資 重繪
   const activeLots = price != null ? pickLots(bands, price) : bands[bands.length - 1]?.lots ?? 400
-  const fsub = subForeign && foreignPct != null ? foreignPct : 0 // 扣除的外資%（常數·最新值）
+  const effPct = useCallback((w: { date: string; tiers: number[] }): number => {
+    const big = bigHolderPct(w.tiers, data!.tierLots, activeLots)
+    const f = subForeign ? (foreignByDate[w.date] ?? 0) : 0
+    return +(big - f).toFixed(2)
+  }, [data, activeLots, subForeign, foreignByDate])
+
   useEffect(() => {
     const s = seriesRef.current
     if (!s || !data) return
-    const pts = data.series.map(w => ({ time: ymd(w.date) as Time, value: +(bigHolderPct(w.tiers, data.tierLots, activeLots) - fsub).toFixed(2) }))
-    s.setData(pts)
+    s.setData(data.series.map(w => ({ time: ymd(w.date) as Time, value: effPct(w) })))
     chartRef.current?.timeScale().fitContent()
-  }, [data, activeLots, fsub])
+  }, [data, effPct])
 
   // 統計：最新 + 週對週（扣外資後）
   const series = data?.series ?? []
-  const latestPct = series.length ? +(bigHolderPct(series[series.length - 1].tiers, data!.tierLots, activeLots) - fsub).toFixed(2) : null
-  const prevPct   = series.length > 1 ? +(bigHolderPct(series[series.length - 2].tiers, data!.tierLots, activeLots) - fsub).toFixed(2) : null
+  const latestPct = series.length ? effPct(series[series.length - 1]) : null
+  const prevPct   = series.length > 1 ? effPct(series[series.length - 2]) : null
   const wow = latestPct != null && prevPct != null ? +(latestPct - prevPct).toFixed(2) : null
+  const latestForeign = series.length ? foreignByDate[series[series.length - 1].date] : null
 
   const setBand = (i: number, patch: Partial<Band>) => setBands(bs => bs.map((b, j) => j === i ? { ...b, ...patch } : b))
   const addBand = () => setBands(bs => {
@@ -171,15 +176,15 @@ export default function ChipsView() {
       {/* 統計 + 扣外資 */}
       {latestPct != null && (
         <div className="flex items-center gap-x-6 gap-y-1.5 text-sm flex-wrap">
-          <span className="text-gray-400">最新{subForeign && foreignPct != null ? '內部' : ''}大戶佔比 <b className="text-amber-300 text-lg">{latestPct}%</b></span>
+          <span className="text-gray-400">最新{subForeign && latestForeign != null ? '內部' : ''}大戶佔比 <b className="text-amber-300 text-lg">{latestPct}%</b></span>
           {wow != null && (
             <span className="text-gray-400">週對週 <b style={{ color: wow > 0 ? '#f87171' : wow < 0 ? '#4ade80' : '#9ca3af' }}>{wow > 0 ? '+' : ''}{wow}%</b></span>
           )}
           <label className="flex items-center gap-1.5 cursor-pointer">
             <input type="checkbox" checked={subForeign} onChange={e => setSubForeign(e.target.checked)} className="accent-amber-500" />
-            <span className="text-gray-300">扣外資</span>
-            {foreignPct != null
-              ? <span className="text-gray-500">（官方·最新 {foreignPct}%）</span>
+            <span className="text-gray-300">扣外資（逐週·官方）</span>
+            {latestForeign != null
+              ? <span className="text-gray-500">最新 {latestForeign}%</span>
               : <span className="text-gray-600">（上櫃/查無，未扣）</span>}
           </label>
           <span className="text-xs text-gray-600">※ 投信/自營為估算、暫未扣（之後補）</span>
