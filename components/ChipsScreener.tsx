@@ -6,11 +6,12 @@ import { useEffect, useState, useCallback } from 'react'
 // 近1週增減需累積 ≥2 週快照才會出現（accumulate-forward）；2/3 週增減隨週數長出。
 
 interface Row { code: string; pct: number; d1: number | null }
-interface Resp { date: string; prevDate: string | null; lots: number; total: number; hasDelta: boolean; rows: Row[] }
+interface Resp { date: string; prevDate: string | null; lots: number; net?: boolean; total: number; crawled?: number; hasDelta: boolean; rows: Row[] }
 
 export default function ChipsScreener() {
   const [lots, setLots] = useState<400 | 1000>(400)
   const [sort, setSort] = useState<'level' | 'd1'>('level')
+  const [net, setNet] = useState(false) // 內部大戶（扣三大法人）
   const [data, setData] = useState<Resp | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -18,13 +19,13 @@ export default function ChipsScreener() {
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const r = await fetch(`/api/chips-rank?lots=${lots}&sort=${sort}&limit=100`)
+      const r = await fetch(`/api/chips-rank?lots=${lots}&sort=${sort}&limit=100${net ? '&net=1' : ''}`)
       const j = await r.json()
       if (j.error) setError(j.error)
       else setData(j)
     } catch { setError('排行取得失敗') }
     finally { setLoading(false) }
-  }, [lots, sort])
+  }, [lots, sort, net])
 
   useEffect(() => { load() }, [load])
 
@@ -33,8 +34,12 @@ export default function ChipsScreener() {
   return (
     <div className="h-full flex flex-col gap-3 p-3 overflow-y-auto">
       <div className="flex items-center gap-3 flex-wrap text-sm">
-        <span className="text-gray-300 font-semibold">全市場大戶佔比排行</span>
-        {data && <span className="text-gray-500">資料週 {fmtDate(data.date)}　共 {data.total} 檔</span>}
+        <span className="text-gray-300 font-semibold">全市場{net ? '內部' : ''}大戶佔比排行</span>
+        {data && <span className="text-gray-500">資料週 {fmtDate(data.date)}　共 {data.total} 檔{net && data.crawled != null ? `（三大法人已爬 ${data.crawled} 檔）` : ''}</span>}
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input type="checkbox" checked={net} onChange={e => setNet(e.target.checked)} className="accent-amber-500" />
+          <span className="text-gray-300">內部大戶（扣三大法人）</span>
+        </label>
         <div className="flex rounded-lg overflow-hidden border border-gray-700">
           {([400, 1000] as const).map(l => (
             <button key={l} onClick={() => setLots(l)}

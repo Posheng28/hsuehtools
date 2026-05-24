@@ -48,3 +48,6 @@ next-env.d.ts
 
 # chips screener weekly snapshots
 /.rankdata/
+
+# DJ legal-person holdings crawl cache
+/.legaldata/
