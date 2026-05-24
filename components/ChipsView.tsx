@@ -38,7 +38,9 @@ export default function ChipsView() {
   const [price, setPrice]     = useState<number | null>(null)
   const [foreignByDate, setForeignByDate] = useState<Record<string, number | null>>({}) // 逐週外資持股%
   const [legalByDate, setLegalByDate]     = useState<Record<string, number | null>>({}) // 逐週三大法人持股%
-  const [legalSharesByDate, setLegalSharesByDate] = useState<Record<string, number | null>>({}) // 逐週三大法人持股(張)
+  const [qfiiByDate, setQfiiByDate]     = useState<Record<string, number | null>>({}) // 外資持股(張)
+  const [itByDate, setItByDate]         = useState<Record<string, number | null>>({}) // 投信持股(張)
+  const [dealerByDate, setDealerByDate] = useState<Record<string, number | null>>({}) // 自營持股(張)
   const [subLegal, setSubLegal] = useState(true)                    // 是否扣三大法人
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState<string | null>(null)
@@ -54,13 +56,21 @@ export default function ChipsView() {
   const seriesRef    = useRef<ISeriesApi<'Line'> | null>(null)
   const barContainerRef = useRef<HTMLDivElement>(null)
   const barChartRef     = useRef<IChartApi | null>(null)
-  const barSeriesRef    = useRef<ISeriesApi<'Histogram'> | null>(null)
+  const barTotalRef     = useRef<ISeriesApi<'Histogram'> | null>(null) // 外資+投信+自營（自營色，最底層繪）
+  const barQiRef        = useRef<ISeriesApi<'Histogram'> | null>(null) // 外資+投信（投信色）
+  const barQRef         = useRef<ISeriesApi<'Histogram'> | null>(null) // 外資（外資色，最上層）
+  const barTooltipRef   = useRef<HTMLDivElement>(null)
+  // tooltip 用：持有最新的逐日三者張數（init effect 只跑一次，需經 ref 取最新）
+  const qByRef = useRef<Record<string, number | null>>({})
+  const iByRef = useRef<Record<string, number | null>>({})
+  const dByRef = useRef<Record<string, number | null>>({})
+  useEffect(() => { qByRef.current = qfiiByDate; iByRef.current = itByDate; dByRef.current = dealerByDate }, [qfiiByDate, itByDate, dealerByDate])
 
   // 查詢：抓 chips + 股價
   const query = useCallback(async (raw: string) => {
     const code = raw.trim()
     if (!/^\d{4}$/.test(code)) { setError('請輸入 4 位數台股代號'); return }
-    setLoading(true); setError(null); setForeignByDate({}); setLegalByDate({}); setLegalSharesByDate({})
+    setLoading(true); setError(null); setForeignByDate({}); setLegalByDate({}); setQfiiByDate({}); setItByDate({}); setDealerByDate({})
     try {
       const [cRes, sRes] = await Promise.all([
         fetch(`/api/chips?ticker=${code}`),
@@ -79,8 +89,9 @@ export default function ChipsView() {
       if (dates.length) {
         try {
           const fJson = await (await fetch(`/api/foreign?ticker=${code}&dates=${dates.join(',')}`)).json()
-          setForeignByDate(fJson.foreign ?? {}); setLegalByDate(fJson.legal ?? {}); setLegalSharesByDate(fJson.legalShares ?? {})
-        } catch { setForeignByDate({}); setLegalByDate({}); setLegalSharesByDate({}) }
+          setForeignByDate(fJson.foreign ?? {}); setLegalByDate(fJson.legal ?? {})
+          setQfiiByDate(fJson.qfiiLots ?? {}); setItByDate(fJson.itLots ?? {}); setDealerByDate(fJson.dealerLots ?? {})
+        } catch { setForeignByDate({}); setLegalByDate({}); setQfiiByDate({}); setItByDate({}); setDealerByDate({}) }
       }
     } catch {
       setError('查詢失敗，請稍後再試')
@@ -115,16 +126,34 @@ export default function ChipsView() {
         rightPriceScale: { visible: false },
       })
       barChartRef.current = bar
-      barSeriesRef.current = bar.addSeries(HistogramSeries, {
-        color: '#38bdf8', priceScaleId: 'left',
-        priceFormat: { type: 'custom', minMove: 1, formatter: (v: number) => `${Math.round(v).toLocaleString()}張` },
-      })
+      const fmt = { type: 'custom' as const, minMove: 1, formatter: (v: number) => `${Math.round(v).toLocaleString()}張` }
+      // 堆疊技巧：先畫總和(自營色)、再畫外資+投信(投信色)、最後畫外資(外資色) → 視覺由下而上 外資/投信/自營
+      barTotalRef.current = bar.addSeries(HistogramSeries, { color: '#34d399', priceScaleId: 'left', priceFormat: fmt, priceLineVisible: false, lastValueVisible: false }) // 自營(綠)
+      barQiRef.current    = bar.addSeries(HistogramSeries, { color: '#f59e0b', priceScaleId: 'left', priceFormat: fmt, priceLineVisible: false, lastValueVisible: false }) // 投信(橘)
+      barQRef.current     = bar.addSeries(HistogramSeries, { color: '#3b82f6', priceScaleId: 'left', priceFormat: fmt, priceLineVisible: false, lastValueVisible: false }) // 外資(藍)
       barRo = new ResizeObserver(([e]) => bar.applyOptions({ width: e.contentRect.width, height: e.contentRect.height }))
       barRo.observe(barContainerRef.current)
+
+      // tooltip：顯示三者個別庫存
+      bar.subscribeCrosshairMove(param => {
+        const tip = barTooltipRef.current
+        if (!tip) return
+        if (!param.time || !param.point || param.point.x < 0) { tip.style.opacity = '0'; return }
+        const key = String(param.time).replace(/-/g, '')
+        const q = qByRef.current[key], i = iByRef.current[key], d = dByRef.current[key]
+        if (q == null && i == null && d == null) { tip.style.opacity = '0'; return }
+        const row = (c: string, label: string, v: number | null | undefined) =>
+          `<div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;background:${c};border-radius:2px"></span><span style="color:#d1d5db;flex:1">${label}</span><span style="color:#e5e7eb;font-family:monospace">${v != null ? Math.round(v).toLocaleString() : '—'} 張</span></div>`
+        tip.innerHTML =
+          `<div style="color:#9ca3af;font-size:11px;margin-bottom:4px">${String(param.time)} 三大法人庫存</div>` +
+          row('#3b82f6', '外資', q) + row('#f59e0b', '投信', i) + row('#34d399', '自營', d)
+        tip.style.opacity = '1'
+      })
     }
     return () => {
       ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null
-      barRo?.disconnect(); barChartRef.current?.remove(); barChartRef.current = null; barSeriesRef.current = null
+      barRo?.disconnect(); barChartRef.current?.remove(); barChartRef.current = null
+      barTotalRef.current = null; barQiRef.current = null; barQRef.current = null
     }
   }, [])
 
@@ -141,15 +170,25 @@ export default function ChipsView() {
     if (!s || !data) return
     s.setData(data.series.map(w => ({ time: ymd(w.date) as Time, value: effPct(w) })))
     chartRef.current?.timeScale().fitContent()
-    // 底部柱圖：三大法人持股(張)
-    const bs = barSeriesRef.current
-    if (bs) {
-      bs.setData(data.series
-        .filter(w => legalSharesByDate[w.date] != null)
-        .map(w => ({ time: ymd(w.date) as Time, value: legalSharesByDate[w.date] as number })))
+    // 底部柱圖：三色堆疊（外資/投信/自營），用累積值 + z-order 疊出堆疊效果
+    if (barTotalRef.current && barQiRef.current && barQRef.current) {
+      const tot: { time: Time; value: number }[] = []
+      const qi: { time: Time; value: number }[] = []
+      const q: { time: Time; value: number }[] = []
+      for (const w of data.series) {
+        const qf = qfiiByDate[w.date], it = itByDate[w.date], de = dealerByDate[w.date]
+        if (qf == null || it == null || de == null) continue
+        const t = ymd(w.date) as Time
+        tot.push({ time: t, value: qf + it + de }) // 自營色，最底
+        qi.push({ time: t, value: qf + it })        // 投信色
+        q.push({ time: t, value: qf })              // 外資色，最上
+      }
+      barTotalRef.current.setData(tot)
+      barQiRef.current.setData(qi)
+      barQRef.current.setData(q)
       barChartRef.current?.timeScale().fitContent()
     }
-  }, [data, effPct, legalSharesByDate])
+  }, [data, effPct, qfiiByDate, itByDate, dealerByDate])
 
   // 統計：最新 + 週對週（扣外資後）
   const series = data?.series ?? []
@@ -242,9 +281,19 @@ export default function ChipsView() {
           )}
           <div ref={containerRef} className="w-full h-full" />
         </div>
-        <div className="flex-1 min-h-[120px] relative border-t border-gray-800">
-          {data && <span className="absolute top-1 left-2 z-10 text-xs text-sky-400/80 pointer-events-none">三大法人持股（張）</span>}
+        <div className="flex-1 min-h-[140px] relative border-t border-gray-800">
+          {data && (
+            <div className="absolute top-1 left-2 z-10 flex items-center gap-3 text-xs pointer-events-none">
+              <span className="text-gray-400">三大法人庫存（張）</span>
+              <span className="text-blue-400">■ 外資</span>
+              <span className="text-amber-500">■ 投信</span>
+              <span className="text-emerald-400">■ 自營</span>
+            </div>
+          )}
           <div ref={barContainerRef} className="w-full h-full" />
+          <div ref={barTooltipRef}
+            className="absolute top-6 right-3 pointer-events-none opacity-0 transition-opacity z-20"
+            style={{ background: 'rgba(17,24,39,0.95)', border: '1px solid #374151', borderRadius: 8, padding: '8px 10px', minWidth: 160 }} />
         </div>
       </div>
     </div>

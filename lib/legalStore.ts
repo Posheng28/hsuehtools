@@ -6,7 +6,7 @@ import { promises as fs } from 'fs'
 import path from 'path'
 
 const DIR = path.join(process.cwd(), '.legaldata')
-const mem = new Map<string, Record<string, [number, number, number]>>()
+const mem = new Map<string, Record<string, number[]>>()
 let diskOk: boolean | null = null
 
 const fp = (code: string) => path.join(DIR, `${code}.json`)
@@ -18,7 +18,7 @@ async function ensureDisk(): Promise<boolean> {
   return diskOk
 }
 
-export async function loadLegal(code: string): Promise<Record<string, [number, number, number]> | null> {
+export async function loadLegal(code: string): Promise<Record<string, number[]> | null> {
   if (mem.has(code)) return mem.get(code)!
   if (await ensureDisk()) {
     try { const o = JSON.parse(await fs.readFile(fp(code), 'utf-8')); mem.set(code, o); return o } catch { /* none */ }
@@ -26,7 +26,7 @@ export async function loadLegal(code: string): Promise<Record<string, [number, n
   return null
 }
 
-export async function saveLegal(code: string, weeks: Record<string, [number, number, number]>): Promise<void> {
+export async function saveLegal(code: string, weeks: Record<string, number[]>): Promise<void> {
   mem.set(code, weeks)
   if (await ensureDisk()) { try { await fs.writeFile(fp(code), JSON.stringify(weeks)) } catch { /* ro */ } }
 }

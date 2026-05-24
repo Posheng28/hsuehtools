@@ -13,15 +13,15 @@ const dash = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStar
 const weekKey = (ymd: string) => Math.floor(Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8)) / (7 * 86400000))
 
 // DJ 每日資料 → 每週一點（取該週最後一日），只留最新 KEEP_WEEKS 週（滾動，最舊自動丟）
-function weekly(daily: Record<string, [number, number, number]>): Record<string, [number, number, number]> {
-  const byWeek = new Map<number, { date: string; v: [number, number, number] }>()
+function weekly(daily: Record<string, number[]>): Record<string, number[]> {
+  const byWeek = new Map<number, { date: string; v: number[] }>()
   for (const [d, v] of Object.entries(daily)) {
     const wk = weekKey(d)
     const cur = byWeek.get(wk)
     if (!cur || d > cur.date) byWeek.set(wk, { date: d, v })
   }
   const last = [...byWeek.values()].sort((a, b) => (a.date < b.date ? -1 : 1)).slice(-KEEP_WEEKS)
-  const out: Record<string, [number, number, number]> = {}
+  const out: Record<string, number[]> = {}
   for (const e of last) out[e.date] = e.v
   return out
 }
@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
         const daily = await fetchDJLegal(code, dash(from), dash(to))
         const merged = { ...existing, ...weekly(daily) }                 // 合併進既有
         const kept = Object.keys(merged).sort().slice(-KEEP_WEEKS)        // 滾動保留最新 52 週
-        const out: Record<string, [number, number, number]> = {}
+        const out: Record<string, number[]> = {}
         for (const d of kept) out[d] = merged[d]
         if (Object.keys(out).length) { await saveLegal(code, out); ok++ } else fail++
       } catch { fail++ }

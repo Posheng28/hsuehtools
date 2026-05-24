@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
   const sort = searchParams.get('sort') || 'd1' // d1=近1週增減 / level=佔比
 
   // 取某 legal map 中 ≤ 指定日的最近一週三大法人%
-  const legalAt = (lm: Record<string, [number, number, number]> | null, ymd: string): number | null => {
+  const legalAt = (lm: Record<string, number[]> | null, ymd: string): number | null => {
     if (!lm) return null
     const keys = Object.keys(lm).sort()
     for (let i = keys.length - 1; i >= 0; i--) if (keys[i] <= ymd) return lm[keys[i]][1]
@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
     const idx = use1000 ? 1 : 0
 
     // 內部大戶：載入已爬取的三大法人 legalStore
-    const legalMap = new Map<string, Record<string, [number, number, number]> | null>()
+    const legalMap = new Map<string, Record<string, number[]> | null>()
     let crawled = 0
     if (net) {
       for (const code of await listLegalCodes()) { legalMap.set(code, await loadLegal(code)); crawled++ }
