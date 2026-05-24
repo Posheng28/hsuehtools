@@ -5,7 +5,6 @@ import { fetchDJLegal } from '@/lib/dj'
 // 回傳每個請求週的 { foreign%（外資）, legal%（三大法人） }；該週無資料則取最近一個較早日。
 
 const cache = new Map<string, { at: number; map: Record<string, number[]> }>()
-const adToDash = (ymd: string) => `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -19,7 +18,11 @@ export async function GET(req: NextRequest) {
     const hit = cache.get(code)
     let map = hit && Date.now() - hit.at < 12 * 60 * 60 * 1000 ? hit.map : null
     if (!map) {
-      map = await fetchDJLegal(code, adToDash(dates[0]), adToDash(dates[dates.length - 1]))
+      // 一律抓固定寬範圍（近 ~54 週），快取才永遠完整，不因請求 dates 不同而只存到片段
+      const to = new Date()
+      const from = new Date(); from.setDate(from.getDate() - 380)
+      const ds = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      map = await fetchDJLegal(code, ds(from), ds(to))
       cache.set(code, { at: Date.now(), map })
     }
     const keys = Object.keys(map).sort()
