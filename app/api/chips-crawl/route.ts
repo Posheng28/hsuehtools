@@ -57,16 +57,21 @@ export async function GET(req: NextRequest) {
     const todo = codes.filter(c => !doneSet.has(c)).slice(0, n)
 
     const to = new Date()
-    const from = new Date(); from.setDate(from.getDate() - 7 * (KEEP_WEEKS + 2)) // 抓滿 ~52 週
     let ok = 0, fail = 0, skip = 0
     for (const code of todo) {
-      // 去重：legalStore 已含本週（opendata 週）就不重抓
-      const existing = await loadLegal(code)
-      if (existing && Object.keys(existing).some(d => d >= week)) { prog.done.push(code); skip++; continue }
+      const existing = await loadLegal(code) ?? {}
+      // 去重：已含本週（opendata 週）就不重抓
+      if (Object.keys(existing).some(d => d >= week)) { prog.done.push(code); skip++; continue }
+      // 已有舊資料 → 只抓近 3 週（維護）；全新 → 抓滿 ~52 週（種子）
+      const seed = Object.keys(existing).length === 0
+      const from = new Date(); from.setDate(from.getDate() - (seed ? 7 * (KEEP_WEEKS + 2) : 21))
       try {
-        const map = await fetchDJLegal(code, dash(from), dash(to))
-        const wk = weekly(map) // 收斂每週一點、滾動保留最新 52 週
-        if (Object.keys(wk).length) { await saveLegal(code, wk); ok++ } else fail++
+        const daily = await fetchDJLegal(code, dash(from), dash(to))
+        const merged = { ...existing, ...weekly(daily) }                 // 合併進既有
+        const kept = Object.keys(merged).sort().slice(-KEEP_WEEKS)        // 滾動保留最新 52 週
+        const out: Record<string, [number, number]> = {}
+        for (const d of kept) out[d] = merged[d]
+        if (Object.keys(out).length) { await saveLegal(code, out); ok++ } else fail++
       } catch { fail++ }
       prog.done.push(code)
       await sleep(300) // 禮貌延遲（僅實際抓取時）
