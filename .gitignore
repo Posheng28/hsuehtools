@@ -39,6 +39,9 @@ yarn-error.log*
 # market full-snapshot cache (rolling 6 trading days, re-fetchable)
 /.marketdata/
 
+# TDCC per-stock shareholding (chips) cache, on-demand crawled
+/.chipsdata/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
