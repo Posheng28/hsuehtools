@@ -25,10 +25,18 @@
 | **款一②**（價格+價差） | 超過 **25%** 且起迄價差 ≥ **50 元** | 超過 **23%** 且起迄價差 ≥ **40 元** | 漲幅門檻較低，但需同時達價差 |
 
 - 「起迄價差」= 計算日收盤 − 基準日收盤（6 天首尾差，**非單日**）。
-- 法規另要求「漲幅與全體/同類差幅 ≥ 20%」→ **工具無類股資料，僅算價格面**（UI 標註「僅價格面參考」）。
 - 款一①② **都屬第一款**，都計入「連 3 日 → 處置」。
-- 門檻價公式：`nextTick(bp × 倍數)`；款一② = `max(nextTick(bp×p2), clTick(bp+gap))`（兩條件取較高）。
 - `MARKET_PCT`：TWSE `{p1:1.32, p2:1.25, gap:50}`、TPEx `{p1:1.30, p2:1.23, gap:40}`。
+
+#### 差幅 ≥ 20% 條件（已部分實作，2026/05）
+法規款一①② **逐字**：漲幅與**全體 _及_ 同類**差幅**_均_ ≥ 20%**（AND）。
+- **全體差幅已納入**：用 `/api/market-avg` 取全體累積漲幅 `mAvgPct`，門檻改為 `max(價格門檻, mAvgPct+20%)`。
+  - `thresh(bp, mkt, mAvgPct)` / `nLvl(..., mAvgPct)`：`diffMul = 1+(mAvgPct+20)/100`；`t1=nextTick(bp×max(p1,diffMul))`、`t2=max(nextTick(bp×max(p2,diffMul)), clTick(bp+gap))`。
+  - 市場平靜時門檻 = 價格門檻（不變）；大盤一熱，差幅門檻 > 價格門檻 → 注意門檻自動升。
+  - `mAvgPct=null`（未載入/取不到）→ 退回純價格門檻。貫穿卡片/表格/滑桿判色/處置模擬（`computeTriggers`）。
+- **上市/上櫃分開**：上市股比上市全體、上櫃股比上櫃全體。`mAvgPct = marketAvg[market]`，三者綁同一 `market`。
+- **當日（第 6 間隔）全體漲幅以 0% 計**（無法預測 → 假設）；故 `mAvgPct` = 「已知 5 間隔」值即等於「6 日窗口當日=0」的結果。
+- **同類差幅仍無產業資料、未驗證** → 結果為估計（UI 已標註）。**未來若接產業分類可補上同類那半條**。
 
 ### 第二款（起迄兩營業日，長窗口倍漲）— `CLAUSE2`
 
@@ -78,6 +86,17 @@
 | `notices/route.ts` | 注意紀錄 | TWSE `rwd/zh/announcement/notice`；TPEx `www/zh-tw/bulletin/attention`（直接回 JSON `tables[0].data`） |
 | `disposal/route.ts` | 單股處置 | **TWSE 是 `announcement/punish`**（不是 disposal！）；**TPEx 是 `bulletin/disposal`**（不是 disposition！） |
 | `disposal-list/route.ts` | 全市場處置清單 | 同上兩個 URL，不帶 code |
+| `market-avg/route.ts` | 全體有價證券「已知 5 間隔累積漲幅%」簡單平均（款一差幅基底） | 見下方專段 |
+
+### `market-avg` — 全體累積漲幅（差幅 ≥ 20% 用）
+- **資料源（皆可帶日期回補歷史）**：
+  - 上市：`twse.com.tw/exchangeReport/MI_INDEX?response=json&date=YYYYMMDD&type=ALLBUT0999` → 表 title 含「每日收盤行情」，`row[0]`=代號、`row[8]`=收盤、`row[9]`=漲跌(+/-)(`green`=跌)、`row[10]`=漲跌價差(幅度)。
+  - 上櫃：`tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=YYYY/MM/DD&type=EW&response=json` → `tables[0]`，`row[0]`=代號、`row[2]`=收盤、`row[3]`=漲跌(含正負號)。
+  - 只取普通股 `/^[1-9]\d{3}$/`（排除 00xx ETF、6 位數 ETN、特別股 2887B）。
+- **演算法**：抓最近 **6** 個已收盤交易日（含基準日；非交易日資料源回空 → 跳過避假日）→ 存每檔「當日漲跌幅%」→ **逐檔連乘 5 個間隔 `∏(1+漲跌幅)−1`**（= `close(最近)/close(基準)−1`，與法規價格比值一致）→ 對「整段都有交易」的股票取**簡單算術平均**（非市值加權；官方無此指數，需自算）。
+- **⚠️ 相加 ≠ 連乘**：每日漲跌幅**相加**少算複利交叉項；大漲股 6 天差可達 1~3%，**務必連乘**。已用真實資料對拍「收盤比值」驗證（差 ~0.016pp，純納入檔數差+tick 四捨五入）。
+- **儲存** `lib/marketStore.ts`：每日每市場 `{code:漲跌幅%}` 快照。本機寫 `.marketdata/`（gitignore），雲端唯讀 FS 自動退回純記憶體。`pruneExcept()` 只留當前窗口的交易日（規矩：滾動保留，週一更新即丟最舊）。
+- 回傳 `{ knownIntervals:5, baseDate, lastClosedDate, days, twse:{avg,count}, tpex:{avg,count} }`；結果快取 6h（key=lastClosedDate），`bust=1` 清。
 
 ### 處置 API 欄位對應（重要）
 - **TWSE punish**：`row[2]`=代號、`row[3]`=名稱、`row[6]`=處置起迄時間（斜線格式 `115/05/08～115/05/21`）
@@ -117,7 +136,9 @@ app/api/
   notices/                    注意紀錄
   disposal/                   單股處置（punish/disposal）
   disposal-list/              全市場處置清單
+  market-avg/                 全體累積漲幅平均（款一差幅 ≥ 20% 基底）
 lib/cache.ts                  記憶體快取（getCached/setCached/deleteCachePrefix）
+lib/marketStore.ts            全市場每日漲跌幅快照（磁碟+記憶體 fallback，留 6 交易日）
 docs/PROJECT_NOTES.md         （本檔）
 ```
 
