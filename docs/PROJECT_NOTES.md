@@ -95,6 +95,13 @@
   2. **🕘 歷史紀錄**：用 **localStorage** 持久化（key `period_history_v1`），上限 **15** 筆 FIFO，去重（ticker+from+to），點擊套用、✕ 刪除。
 - localStorage = 同網域+同裝置+同瀏覽器設定檔才共用；不同人/裝置看不到彼此（無後端帳號）。
 
+### 已加入時段卡片：複製 ⧉ + 行內編輯 ✎
+- 每張卡片右上角四鈕：**✎ 編輯｜⧉ 複製｜👁 顯示｜× 刪除**。
+- **✎ 編輯**：卡片就地展開成輸入欄，**預填現有 標的/名稱/起迄日期（絕不清空）** → 可只改時間不動標的。Enter 完成、Esc 取消。
+- **⧉ 複製**：複製同標的/名稱/時間的新卡，**立刻進入編輯模式**、autoFocus 在代碼欄（工作流：複製→改時間或標的→完成）。
+- 改 ticker/from/to 才會重新 fetch；存檔同樣寫入歷史紀錄。
+- 父層機制：`page.tsx` 的 `handleUpdateSegment(id, patch)`（`'ticker'|'from'|'to' in patch` 才 refetch），透過 `onUpdate` prop 傳入；複製沿用既有 `onAdd`（自帶 fetch）。
+
 ---
 
 ## 四、檔案地圖
