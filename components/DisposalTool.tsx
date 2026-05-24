@@ -96,13 +96,17 @@ const MARKET_PCT: Record<Market, { p1: number; p2: number; gap: number }> = {
   TWSE: { p1: 1.32, p2: 1.25, gap: 50 },
   TPEx: { p1: 1.30, p2: 1.23, gap: 40 },
 }
-const thresh = (bp: number, mkt: Market) => {
+// mAvgPct = 全體有價證券「已知部分」累積漲幅%（來自 /api/market-avg）。
+// 法規款一①② 還要求「漲幅與全體差幅 ≥ 20%」→ 漲幅須 ≥ 全體平均+20%
+//   → 對應倍數 ≥ 1+(全體平均+20)/100。門檻取「價格門檻」與「差幅門檻」較高者。
+//   mAvgPct 為 null（尚未載入）時退回純價格門檻。
+const thresh = (bp: number, mkt: Market, mAvgPct?: number | null) => {
   const { p1, p2, gap } = MARKET_PCT[mkt]
-  // 款一①：剛好「超過」p1% 的第一個合法 tick 價
-  const t1 = nextTick(bp * p1)
-  // 款一②：須同時「超過 p2%」且「起迄價差 ≥ gap 元」→ 取兩條件的較高門檻
-  //   超過 p2% → nextTick(bp×p2)；價差≥gap → 收盤 ≥ bp+gap → clTick(bp+gap)
-  const t2 = Math.max(nextTick(bp * p2), clTick(bp + gap))
+  const diffMul = mAvgPct != null ? 1 + (mAvgPct + 20) / 100 : 0  // 差幅閘門對應的倍數
+  // 款一①：剛好「超過」p1%（或差幅+20%，取較高）的第一個合法 tick 價
+  const t1 = nextTick(bp * Math.max(p1, diffMul))
+  // 款一②：須同時「超過 p2%（或差幅+20%）」且「起迄價差 ≥ gap 元」→ 取較高門檻
+  const t2 = Math.max(nextTick(bp * Math.max(p2, diffMul)), clTick(bp + gap))
   return { t1, t2 }
 }
 
@@ -155,8 +159,8 @@ function checkClause2(
   return { triggered: true, window: hit.window, pct: hit.pct, sixDayPct, exempt }
 }
 
-function nLvl(price: number, bp: number, mkt: Market): 0|1|2 {
-  const { t1, t2 } = thresh(bp, mkt)
+function nLvl(price: number, bp: number, mkt: Market, mAvgPct?: number | null): 0|1|2 {
+  const { t1, t2 } = thresh(bp, mkt, mAvgPct)
   // 款一① 與 款一② 都屬「第一款」；① 門檻較嚴(高)優先判定
   if (price >= t1) return 1
   if (price >= t2) return 2
@@ -325,6 +329,27 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
 
   // 完整歷史股價（供第二款 30/60/90 日窗口計算）
   const [priceHistory, setPriceHistory] = useState<{ date: string; value: number }[]>([])
+
+  // 全體有價證券「已知部分」累積漲幅%（款一差幅 ≥ 20% 判定用），分上市/上櫃
+  const [marketAvg, setMarketAvg] = useState<{
+    TWSE: number | null; TPEx: number | null; baseDate?: string; lastClosedDate?: string
+  }>({ TWSE: null, TPEx: null })
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/market-avg')
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled || d.error) return
+        setMarketAvg({
+          TWSE: d.twse?.avg ?? null,
+          TPEx: d.tpex?.avg ?? null,
+          baseDate: d.baseDate,
+          lastClosedDate: d.lastClosedDate,
+        })
+      })
+      .catch(() => { /* 取不到就退回純價格門檻 */ })
+    return () => { cancelled = true }
+  }, [])
 
   const [queryCode,    setQueryCode]    = useState('')
   const [importStatus, setImportStatus] = useState<ImportStatus>({ loading: false })
@@ -590,6 +615,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
 
   /* ── Derived ─────────────────────────────────────────────────────────────── */
   const startPrice = days[days.length-1]?.bp ?? 100
+  const mAvgPct = marketAvg[market]   // 當前市場別的全體已知累積漲幅%（null=未載入→純價格門檻）
 
   // 第二款（以實際匯入歷史股價判斷，含防重複豁免）
   const clause2 = checkClause2(priceHistory, pastNotices, market)
@@ -603,7 +629,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   const notices: (0|1|2)[] = []
   for (let i = 0; i < days.length; i++) {
     if (simPrices[i] === null) break
-    notices.push(nLvl(simPrices[i]!, days[i].bp, market))
+    notices.push(nLvl(simPrices[i]!, days[i].bp, market, mAvgPct))
   }
 
   // 模擬是否觸發處置（以 baseReset 為起算）— 用於下方「此路徑安全/觸發」結果列
@@ -748,7 +774,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
             </thead>
             <tbody>
               {days.map((d, i) => {
-                const { t1, t2 } = thresh(d.bp, market)
+                const { t1, t2 } = thresh(d.bp, market, mAvgPct)
                 return (
                   <tr key={i} className="border-b border-gray-800/60">
                     <td className="py-2.5 pr-2 text-gray-400 text-sm whitespace-nowrap">{d.baseDateStr.slice(5)}</td>
@@ -822,13 +848,13 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   const grid = (
     <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
       {days.map((d, i) => {
-        const { t1, t2 }      = thresh(d.bp, market)
+        const { t1, t2 }      = thresh(d.bp, market, mAvgPct)
         const { minP, maxP }  = getDayBounds(i, simPrices, days)
         const chosen          = simPrices[i]
         const prevUnset       = i > 0 && simPrices[i-1] === null
         const isUnset         = chosen === null
         const dispPrice       = isUnset ? (i === 0 ? startPrice : (simPrices[i-1] ?? startPrice)) : chosen
-        const nl              = isUnset ? null : nLvl(chosen, d.bp, market)
+        const nl              = isUnset ? null : nLvl(chosen, d.bp, market, mAvgPct)
         const pctChg          = ((dispPrice - d.bp) / d.bp * 100).toFixed(1)
         // 日內漲幅 = 對比昨日收盤（即前一張卡的價格）
         const prevClose       = i === 0 ? startPrice : (simPrices[i-1] ?? startPrice)
@@ -1039,7 +1065,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
             const focusIdx = simPrices.findIndex(p => p === null)
             const focusDay = focusIdx >= 0 ? days[focusIdx] : days[days.length-1]
             if (!focusDay) return null
-            const { t1, t2 } = thresh(focusDay.bp, market)
+            const { t1, t2 } = thresh(focusDay.bp, market, mAvgPct)
             return (
               <div className="p-3 rounded-xl bg-gray-900 border border-gray-700 flex flex-wrap items-center gap-x-6 gap-y-1.5">
                 <div className="flex items-center gap-2">
@@ -1059,6 +1085,27 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                     <b className="text-red-300 text-base">{fNum(t2)}</b>
                   </span>
                   <span className="text-sm text-green-500">安全線 &lt; {fNum(t2)}</span>
+                </div>
+
+                {/* 全體有價證券近 6 日漲幅（差幅 ≥ 20% 判定基底） */}
+                <div className="w-full border-t border-gray-800 pt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-sm text-gray-300">
+                    📊 全體{market === 'TWSE' ? '上市' : '上櫃'}近 6 日漲幅
+                    <span className="text-gray-500">（已知 5 間隔{marketAvg.baseDate && marketAvg.lastClosedDate ? `：${marketAvg.baseDate.slice(4, 6)}/${marketAvg.baseDate.slice(6)}→${marketAvg.lastClosedDate.slice(4, 6)}/${marketAvg.lastClosedDate.slice(6)}` : ''}）</span>：
+                  </span>
+                  {mAvgPct != null ? (
+                    <b className="text-orange-300 text-base">{mAvgPct > 0 ? '+' : ''}{mAvgPct}%</b>
+                  ) : (
+                    <span className="text-gray-500 text-sm animate-pulse">載入中…</span>
+                  )}
+                  {mAvgPct != null && (
+                    <span className="text-xs text-gray-500">
+                      → 差幅閘門：漲幅須 ≥ <b className="text-orange-300/90">{(mAvgPct + 20).toFixed(2)}%</b>（全體+20%）才算注意
+                    </span>
+                  )}
+                  <span className="w-full text-xs text-amber-400/80">
+                    ⚠️ 當日（第 6 間隔）全體漲幅以 <b>0%</b> 計入（無法預測，故假設）；同類差幅無產業資料、未驗證 → 結果為估計
+                  </span>
                 </div>
               </div>
             )
@@ -1201,7 +1248,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-gray-500 mt-1.5">＋ 法規另要求「漲幅與大盤/類股差幅 ≥ 20%」，本工具僅算價格面（無類股資料）。款一①② 都計入「連 3 日第一款 → 處置」。</p>
+                <p className="text-xs text-gray-500 mt-1.5">＋ 法規另要求「漲幅與全體<b>及</b>同類差幅<b>均</b> ≥ 20%」。本工具<b className="text-orange-300/90">已納入全體差幅</b>（門檻自動取「價格門檻」與「全體+20%」較高者，當日全體漲幅以 0% 計）；<b>同類差幅仍無產業資料、未驗證</b>，故結果為估計。款一①② 都計入「連 3 日第一款 → 處置」。</p>
               </section>
 
               {/* 第二款 */}
