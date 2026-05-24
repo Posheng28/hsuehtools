@@ -190,7 +190,9 @@ docs/PROJECT_NOTES.md         （本檔）
 |------|------|------|
 | 單股大戶級距週歷史 | TDCC 個股查詢 `qryStock`（POST，Struts **SYNCHRONIZER_TOKEN** 一次性、**token 鏈**、cookie；`firDate`=最新日不是查詢週） | 約 1 年 |
 | 全市場大戶（最新週） | TDCC opendata `getOD.ashx?id=1-5`（一次回全市場 ~3900 檔 × 17 級距，欄位：日期,代號,分級,人數,股數,佔比%） | 僅最新一週 |
-| 三大法人持股比重% | **DJ**（富邦/嘉實）`zcl.djhtm?a=代號&c=起&d=迄`（**big5**、伺服器渲染、上市櫃通吃，明細表末兩欄=外資%、三大法人%；投信/自營為估算） | 約 1 年每日 |
+| 三大法人持股 | **DJ**（富邦/嘉實）`zcl.djhtm?a=代號&c=起&d=迄`（**big5**、伺服器渲染、上市櫃通吃；明細表末欄序：外資/投信/自營**估計持股(張)**、三大法人合計(張)、外資%、三大法人%）| 約 1 年每日 |
+| `lib/dj` 回傳 | `LegalRow = [外資%, 三大法人%, 外資張, 投信張, 自營張]`（chips-rank 只讀 index 1=三大法人%；ChipsView 柱圖用張數） | — |
+| **`/api/foreign` 快取規則** | 一律抓**固定近 54 週**（不跟著請求 dates 變），快取以 code 為 key → 永遠完整。**勿用請求區間當抓取範圍**（曾因此只快取到 1 天、線圖最後一週暴跌） | — |
 | 外資官方（備用） | 上市 MI_QFIIS、上櫃 OpenAPI `tpex_3insti_qfii`（⚠️ MI_QFIIS `row[6]`=**尚可投資比率非持股**，持股要 `(發行−尚可)/發行`，已改用 DJ） | — |
 | 全市場三大法人買賣超週報（維護用） | 上市 `TWT54U?date=週起&dymd=週迄&selectType=ALLBUT0999`（1335 檔）；上櫃週報端點未接 | 每週 |
 
@@ -208,6 +210,11 @@ docs/PROJECT_NOTES.md         （本檔）
 ### 排行（`chips-rank`）
 - `?net=1` = 內部大戶（大戶 − 三大法人，只列已爬到三大法人的股）；否則原始大戶。`?lots=400|1000`、`?sort=level|d1`、`limit` 預設 100、UI 取 **top 50**。
 - **週對週增減**：opendata 大戶每週累積（rankStore）+ DJ 三大法人歷史 → 第 2 個 opendata 週後自動長出。
+
+### ChipsView 個股圖（lightweight-charts，上下兩張）
+- **上**：內部大戶佔比折線（%，右軸，黃；勾「扣三大法人」逐週相減）。
+- **下**：**三大法人庫存三色堆疊柱**（張，**左軸**）— 外資藍/投信橘/自營綠。堆疊用「**累積值 + z-order**」技巧：先畫總和(自營色)、再外資+投信(投信色)、最後外資(外資色)，視覺由下而上=外資/投信/自營。**crosshair tooltip** 顯示該週三者個別庫存（張）。
+- 自訂「股價區間→張數門檻」可加區間（localStorage `chips_bands_v1`），依股價挑門檻。
 
 ### 踩雷
 - **勿在 server 執行中 `rm .legaldata`**：store 的 `ensureDisk` 快取了「目錄存在」，刪目錄後 mkdir 不再執行 → 寫檔靜默失敗。要重置請重建目錄或重啟 dev server。
