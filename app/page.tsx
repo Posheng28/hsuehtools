@@ -291,7 +291,7 @@ export default function Home() {
             </div>
             <div className="px-5 py-4 space-y-5 text-sm text-gray-300">
               <p className="text-gray-400 leading-relaxed border-l-2 border-blue-500 pl-3">
-                主要使用：疊加台美股（可看同類族群連動與否）與各大經濟數據疊加
+                三種模式（右上角切換）：<span className="text-gray-200">疊加圖表</span>（台美股 + 經濟數據疊加，看連動）、<span className="text-gray-200">時段比較</span>（不同期間起點對齊比走勢）、<span className="text-gray-200">注意/處置</span>（台股監視制度推演）。
               </p>
               <section>
                 <h3 className="text-white font-semibold mb-2">疊加圖表模式</h3>
@@ -309,10 +309,26 @@ export default function Home() {
                   <li>• 所有時段的 <span className="text-gray-200">起點對齊</span>，以 % 變化顯示</li>
                   <li>• 可比較同一股票不同時期，或不同股票同一時期</li>
                   <li>• X 軸顯示距起始日天數（D+N / W+N / M+N）</li>
+                  <li>• 卡片 <code className="bg-gray-800 px-1 rounded text-xs">✎</code> 編輯：就地改代碼/名稱/起迄（預填現值，可只改日期）；<code className="bg-gray-800 px-1 rounded text-xs">⧉</code> 複製：複製一張並立刻編輯，快速產生同標的不同時段</li>
+                  <li>• 📅 年份快選、🕘 歷史紀錄（自動保存，重整仍在）</li>
+                </ul>
+              </section>
+
+              <section>
+                <h3 className="text-white font-semibold mb-2">注意/處置推演模式</h3>
+                <ul className="space-y-1.5 text-gray-400">
+                  <li>• 模擬未來股價，推估會不會被台股列「<span className="text-gray-200">注意</span>」或「<span className="text-gray-200">處置</span>」</li>
+                  <li>• 輸入股號（如 <code className="bg-gray-800 px-1 rounded text-xs">2330</code>、<code className="bg-gray-800 px-1 rounded text-xs">3105</code>）匯入 → 自動帶入近 6 日收盤、歷史注意/處置紀錄、市場別</li>
+                  <li>• <span className="text-gray-200">拖滑桿或輸入價格</span>模擬每日收盤；卡片即時顯示 vs 基準累積漲幅與日內漲跌</li>
+                  <li>• 配色：<span className="text-red-400">🔴 款一①</span>（純價格，上市&gt;32%/上櫃&gt;30%）、<span className="text-red-300">🔴 款一②</span>（價格+價差，&gt;25%/23% 且起迄差≥50/40元）、<span className="text-yellow-400">🟡 款二</span>（長窗口倍漲）、<span className="text-green-400">🟢 無注意</span></li>
+                  <li>• <span className="text-gray-200">差幅條件</span>：除了價格，還要「漲幅 − 全體市場近 6 日平均 ≥ 20%」才算注意，門檻已自動納入（大盤越熱門檻越高）</li>
+                  <li>• <span className="text-gray-200">處置</span>：連 3 日款一 / 連 5 日 / 10 日內 6 日 / 30 日內 12 日 → 處置</li>
+                  <li>• <code className="bg-gray-800 px-1 rounded text-xs">📖 規則說明</code> 看完整法規門檻；<code className="bg-gray-800 px-1 rounded text-xs">🚨 查詢清單</code> 看全市場目前處置股</li>
+                  <li className="text-amber-400/80">• 當日全體漲幅以 0% 估、同類差幅無產業資料未驗證 → 結果為「價格面推演參考」，非官方判定</li>
                 </ul>
               </section>
               <section>
-                <h3 className="text-white font-semibold mb-2">圖表操作</h3>
+                <h3 className="text-white font-semibold mb-2">圖表操作（疊加 / 時段模式）</h3>
                 <ul className="space-y-1.5 text-gray-400">
                   <li>• 滾輪 / 雙指捏合：縮放</li>
                   <li>• 拖拉：左右平移</li>
