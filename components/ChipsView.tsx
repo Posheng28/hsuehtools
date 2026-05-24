@@ -54,8 +54,6 @@ export default function ChipsView() {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef     = useRef<IChartApi | null>(null)
   const seriesRef    = useRef<ISeriesApi<'Line'> | null>(null)
-  const barContainerRef = useRef<HTMLDivElement>(null)
-  const barChartRef     = useRef<IChartApi | null>(null)
   const barTotalRef     = useRef<ISeriesApi<'Histogram'> | null>(null) // 外資+投信+自營（自營色，最底層繪）
   const barQiRef        = useRef<ISeriesApi<'Histogram'> | null>(null) // 外資+投信（投信色）
   const barQRef         = useRef<ISeriesApi<'Histogram'> | null>(null) // 外資（外資色，最上層）
@@ -98,7 +96,7 @@ export default function ChipsView() {
     } finally { setLoading(false) }
   }, [])
 
-  // 初始化圖表
+  // 初始化圖表（單張：折線走右軸於上方、三色堆疊柱走左軸壓底部，疊在同一時間軸）
   useEffect(() => {
     if (!containerRef.current) return
     const chart = createChart(containerRef.current, {
@@ -107,52 +105,40 @@ export default function ChipsView() {
       grid: { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
       crosshair: { vertLine: { color: '#6b7280', labelBackgroundColor: '#374151' }, horzLine: { color: '#6b7280', labelBackgroundColor: '#374151' } },
       timeScale: { borderColor: '#374151', timeVisible: false },
-      rightPriceScale: { borderColor: '#374151' },
+      rightPriceScale: { borderColor: '#374151', scaleMargins: { top: 0.05, bottom: 0.42 } }, // 線(%)佔上方
+      leftPriceScale: { borderColor: '#374151', visible: true, scaleMargins: { top: 0.62, bottom: 0 } }, // 柱(張)壓底部，數字走左軸
     })
     chartRef.current = chart
-    seriesRef.current = chart.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 2, priceFormat: { type: 'custom', minMove: 0.01, formatter: (v: number) => `${v.toFixed(2)}%` } })
+    const fmt = { type: 'custom' as const, minMove: 1, formatter: (v: number) => `${Math.round(v).toLocaleString()}張` }
+    // 先畫柱（在底層），最後畫線（在最上層）
+    // 堆疊技巧：總和(自營色)→外資+投信(投信色)→外資(外資色)，視覺由下而上=外資/投信/自營
+    barTotalRef.current = chart.addSeries(HistogramSeries, { color: '#34d399', priceScaleId: 'left', priceFormat: fmt, priceLineVisible: false, lastValueVisible: false }) // 自營(綠)
+    barQiRef.current    = chart.addSeries(HistogramSeries, { color: '#f59e0b', priceScaleId: 'left', priceFormat: fmt, priceLineVisible: false, lastValueVisible: false }) // 投信(橘)
+    barQRef.current     = chart.addSeries(HistogramSeries, { color: '#3b82f6', priceScaleId: 'left', priceFormat: fmt, priceLineVisible: false, lastValueVisible: false }) // 外資(藍)
+    seriesRef.current = chart.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 2, priceScaleId: 'right', priceFormat: { type: 'custom', minMove: 0.01, formatter: (v: number) => `${v.toFixed(2)}%` } })
     const ro = new ResizeObserver(([e]) => chart.applyOptions({ width: e.contentRect.width, height: e.contentRect.height }))
     ro.observe(containerRef.current)
 
-    // 底部柱狀圖：三大法人持股（張），數字走左軸
-    let barRo: ResizeObserver | null = null
-    if (barContainerRef.current) {
-      const bar = createChart(barContainerRef.current, {
-        width: barContainerRef.current.clientWidth, height: barContainerRef.current.clientHeight,
-        layout: { background: { color: '#030712' }, textColor: '#9ca3af', fontFamily: 'system-ui, sans-serif', fontSize: 11 },
-        grid: { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
-        timeScale: { borderColor: '#374151', timeVisible: false },
-        leftPriceScale: { borderColor: '#374151', visible: true },   // 數字在左軸
-        rightPriceScale: { visible: false },
-      })
-      barChartRef.current = bar
-      const fmt = { type: 'custom' as const, minMove: 1, formatter: (v: number) => `${Math.round(v).toLocaleString()}張` }
-      // 堆疊技巧：先畫總和(自營色)、再畫外資+投信(投信色)、最後畫外資(外資色) → 視覺由下而上 外資/投信/自營
-      barTotalRef.current = bar.addSeries(HistogramSeries, { color: '#34d399', priceScaleId: 'left', priceFormat: fmt, priceLineVisible: false, lastValueVisible: false }) // 自營(綠)
-      barQiRef.current    = bar.addSeries(HistogramSeries, { color: '#f59e0b', priceScaleId: 'left', priceFormat: fmt, priceLineVisible: false, lastValueVisible: false }) // 投信(橘)
-      barQRef.current     = bar.addSeries(HistogramSeries, { color: '#3b82f6', priceScaleId: 'left', priceFormat: fmt, priceLineVisible: false, lastValueVisible: false }) // 外資(藍)
-      barRo = new ResizeObserver(([e]) => bar.applyOptions({ width: e.contentRect.width, height: e.contentRect.height }))
-      barRo.observe(barContainerRef.current)
+    // tooltip：該週 內部大戶% + 三大法人個別庫存（張）
+    chart.subscribeCrosshairMove(param => {
+      const tip = barTooltipRef.current
+      if (!tip) return
+      if (!param.time || !param.point || param.point.x < 0) { tip.style.opacity = '0'; return }
+      const key = String(param.time).replace(/-/g, '')
+      const q = qByRef.current[key], i = iByRef.current[key], d = dByRef.current[key]
+      const lineVal = seriesRef.current ? (param.seriesData.get(seriesRef.current) as { value?: number } | undefined)?.value : undefined
+      if (q == null && i == null && d == null && lineVal == null) { tip.style.opacity = '0'; return }
+      const row = (c: string, label: string, v: number | null | undefined) =>
+        `<div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;background:${c};border-radius:2px"></span><span style="color:#d1d5db;flex:1">${label}</span><span style="color:#e5e7eb;font-family:monospace">${v != null ? Math.round(v).toLocaleString() : '—'} 張</span></div>`
+      tip.innerHTML =
+        `<div style="color:#9ca3af;font-size:11px;margin-bottom:4px">${String(param.time)}</div>` +
+        (lineVal != null ? `<div style="color:#fbbf24;font-size:12px;margin-bottom:4px">內部大戶 ${lineVal.toFixed(2)}%</div>` : '') +
+        row('#3b82f6', '外資', q) + row('#f59e0b', '投信', i) + row('#34d399', '自營', d)
+      tip.style.opacity = '1'
+    })
 
-      // tooltip：顯示三者個別庫存
-      bar.subscribeCrosshairMove(param => {
-        const tip = barTooltipRef.current
-        if (!tip) return
-        if (!param.time || !param.point || param.point.x < 0) { tip.style.opacity = '0'; return }
-        const key = String(param.time).replace(/-/g, '')
-        const q = qByRef.current[key], i = iByRef.current[key], d = dByRef.current[key]
-        if (q == null && i == null && d == null) { tip.style.opacity = '0'; return }
-        const row = (c: string, label: string, v: number | null | undefined) =>
-          `<div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;background:${c};border-radius:2px"></span><span style="color:#d1d5db;flex:1">${label}</span><span style="color:#e5e7eb;font-family:monospace">${v != null ? Math.round(v).toLocaleString() : '—'} 張</span></div>`
-        tip.innerHTML =
-          `<div style="color:#9ca3af;font-size:11px;margin-bottom:4px">${String(param.time)} 三大法人庫存</div>` +
-          row('#3b82f6', '外資', q) + row('#f59e0b', '投信', i) + row('#34d399', '自營', d)
-        tip.style.opacity = '1'
-      })
-    }
     return () => {
       ro.disconnect(); chart.remove(); chartRef.current = null; seriesRef.current = null
-      barRo?.disconnect(); barChartRef.current?.remove(); barChartRef.current = null
       barTotalRef.current = null; barQiRef.current = null; barQRef.current = null
     }
   }, [])
@@ -186,8 +172,8 @@ export default function ChipsView() {
       barTotalRef.current.setData(tot)
       barQiRef.current.setData(qi)
       barQRef.current.setData(q)
-      barChartRef.current?.timeScale().fitContent()
     }
+    chartRef.current?.timeScale().fitContent()
   }, [data, effPct, qfiiByDate, itByDate, dealerByDate])
 
   // 統計：最新 + 週對週（扣外資後）
@@ -270,31 +256,27 @@ export default function ChipsView() {
         </div>
       )}
 
-      {/* 趨勢圖（上：內部大戶佔比線；下：三大法人持股張數柱，左軸） */}
-      <div className="flex-1 min-h-[360px] flex flex-col">
-        <div className="relative flex-[2] min-h-[200px]">
-          {!data && !loading && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500 text-sm gap-2 pointer-events-none">
-              <span>輸入股號查詢大戶持股趨勢</span>
-              <span className="text-xs text-gray-600">資料來自集保戶股權分散表（每週五更新），首次查詢會即時爬取約 1 年週資料</span>
-            </div>
-          )}
-          <div ref={containerRef} className="w-full h-full" />
-        </div>
-        <div className="flex-1 min-h-[140px] relative border-t border-gray-800">
-          {data && (
-            <div className="absolute top-1 left-2 z-10 flex items-center gap-3 text-xs pointer-events-none">
-              <span className="text-gray-400">三大法人庫存（張）</span>
-              <span className="text-blue-400">■ 外資</span>
-              <span className="text-amber-500">■ 投信</span>
-              <span className="text-emerald-400">■ 自營</span>
-            </div>
-          )}
-          <div ref={barContainerRef} className="w-full h-full" />
-          <div ref={barTooltipRef}
-            className="absolute top-6 right-3 pointer-events-none opacity-0 transition-opacity z-20"
-            style={{ background: 'rgba(17,24,39,0.95)', border: '1px solid #374151', borderRadius: 8, padding: '8px 10px', minWidth: 160 }} />
-        </div>
+      {/* 趨勢圖（單張疊圖：上=內部大戶%折線；下=三大法人庫存三色堆疊柱，左軸） */}
+      <div className="flex-1 min-h-[360px] relative">
+        {!data && !loading && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500 text-sm gap-2 pointer-events-none z-10">
+            <span>輸入股號查詢大戶持股趨勢</span>
+            <span className="text-xs text-gray-600">資料來自集保戶股權分散表（每週五更新），首次查詢會即時爬取約 1 年週資料</span>
+          </div>
+        )}
+        {data && (
+          <div className="absolute top-1 left-2 z-10 flex items-center gap-3 text-xs pointer-events-none">
+            <span className="text-amber-300">— 內部大戶%</span>
+            <span className="text-gray-500">｜庫存(張)：</span>
+            <span className="text-blue-400">■ 外資</span>
+            <span className="text-amber-500">■ 投信</span>
+            <span className="text-emerald-400">■ 自營</span>
+          </div>
+        )}
+        <div ref={containerRef} className="w-full h-full" />
+        <div ref={barTooltipRef}
+          className="absolute top-6 right-14 pointer-events-none opacity-0 transition-opacity z-20"
+          style={{ background: 'rgba(17,24,39,0.95)', border: '1px solid #374151', borderRadius: 8, padding: '8px 10px', minWidth: 160 }} />
       </div>
     </div>
   )
