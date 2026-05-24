@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# market full-snapshot cache (rolling 6 trading days, re-fetchable)
+/.marketdata/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
