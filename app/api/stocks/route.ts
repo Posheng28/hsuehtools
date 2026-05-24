@@ -85,6 +85,7 @@ async function fetchYahoo(symbol: string, params: { range?: string; from?: strin
 
   const timestamps: number[] = result.timestamp ?? []
   const closes: number[]     = result.indicators?.quote?.[0]?.close ?? []
+  const volumes: number[]    = result.indicators?.quote?.[0]?.volume ?? []
 
   const data = timestamps
     .map((ts, i) => {
@@ -93,10 +94,11 @@ async function fetchYahoo(symbol: string, params: { range?: string; from?: strin
       const date  = new Date((ts + 28800) * 1000).toISOString().split('T')[0]
       const value = closes[i]
       if (value == null || isNaN(value)) return null
-      return { date, value }
+      const vol = volumes[i]   // 成交股數（款三 60 日均量用）；缺值留 undefined
+      return { date, value, volume: vol == null || isNaN(vol) ? undefined : vol }
     })
     .filter(Boolean)
-    .sort((a, b) => (a!.date < b!.date ? -1 : 1)) as { date: string; value: number }[]
+    .sort((a, b) => (a!.date < b!.date ? -1 : 1)) as { date: string; value: number; volume?: number }[]
 
   return data.length > 0 ? data : null
 }

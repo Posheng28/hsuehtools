@@ -92,22 +92,27 @@ const baseMD  = (day: DayEntry) => fmtMMDD(parseD(day.baseDateStr))
 // 款一①（純價格）：上市 超過32% / 上櫃 超過30%
 // 款一②（價格+價差）：上市 超過25% 且起迄價差≥50元 / 上櫃 超過23% 且起迄價差≥40元
 export type Market = 'TWSE' | 'TPEx'
-const MARKET_PCT: Record<Market, { p1: number; p2: number; gap: number }> = {
-  TWSE: { p1: 1.32, p2: 1.25, gap: 50 },
-  TPEx: { p1: 1.30, p2: 1.23, gap: 40 },
+// p3 = 款三（價量異常）的價格門檻：上市 超過25% / 上櫃 超過27%（量另計）
+const MARKET_PCT: Record<Market, { p1: number; p2: number; p3: number; gap: number }> = {
+  TWSE: { p1: 1.32, p2: 1.25, p3: 1.25, gap: 50 },
+  TPEx: { p1: 1.30, p2: 1.23, p3: 1.27, gap: 40 },
 }
+// 款三量門檻：當日量 ≥ 最近 60 日均量的此倍數
+const CLAUSE3_VOL_MULT = 5
 // mAvgPct = 全體有價證券「已知部分」累積漲幅%（來自 /api/market-avg）。
 // 法規款一①② 還要求「漲幅與全體差幅 ≥ 20%」→ 漲幅須 ≥ 全體平均+20%
 //   → 對應倍數 ≥ 1+(全體平均+20)/100。門檻取「價格門檻」與「差幅門檻」較高者。
 //   mAvgPct 為 null（尚未載入）時退回純價格門檻。
 const thresh = (bp: number, mkt: Market, mAvgPct?: number | null) => {
-  const { p1, p2, gap } = MARKET_PCT[mkt]
+  const { p1, p2, p3, gap } = MARKET_PCT[mkt]
   const diffMul = mAvgPct != null ? 1 + (mAvgPct + 20) / 100 : 0  // 差幅閘門對應的倍數
   // 款一①：剛好「超過」p1%（或差幅+20%，取較高）的第一個合法 tick 價
   const t1 = nextTick(bp * Math.max(p1, diffMul))
   // 款一②：須同時「超過 p2%（或差幅+20%）」且「起迄價差 ≥ gap 元」→ 取較高門檻
   const t2 = Math.max(nextTick(bp * Math.max(p2, diffMul)), clTick(bp + gap))
-  return { t1, t2 }
+  // 款三：超過 p3%（或差幅+20%，取較高）；量條件另判（無價差要求）
+  const t3 = nextTick(bp * Math.max(p3, diffMul))
+  return { t1, t2, t3 }
 }
 
 // ── 第二款（起迄兩營業日，長窗口倍漲）─────────────────────────────────────────
@@ -159,11 +164,15 @@ function checkClause2(
   return { triggered: true, window: hit.window, pct: hit.pct, sixDayPct, exempt }
 }
 
-function nLvl(price: number, bp: number, mkt: Market, mAvgPct?: number | null): 0|1|2 {
-  const { t1, t2 } = thresh(bp, mkt, mAvgPct)
+// 回傳注意 level：1=款一① 2=款一②（皆第一款）3=款三（第三款，價量異常）0=無
+// volumeMet：當日量是否達 5×60日均量（款三量條件）；僅最近一日（卡 0）有意義
+function nLvl(price: number, bp: number, mkt: Market, mAvgPct?: number | null, volumeMet = false): 0|1|2|3 {
+  const { t1, t2, t3 } = thresh(bp, mkt, mAvgPct)
   // 款一① 與 款一② 都屬「第一款」；① 門檻較嚴(高)優先判定
   if (price >= t1) return 1
   if (price >= t2) return 2
+  // 款三：價格達門檻「且」量達標（無價差要求）→ 第三款
+  if (volumeMet && price >= t3) return 3
   return 0
 }
 
@@ -197,7 +206,7 @@ function defaultDays(): DayEntry[] {
  * baseReset: 最近一次處置生效日（30交易日內），若有則從此日起算，不追溯之前
  */
 function computeTriggers(
-  notices: (0|1|2)[],
+  notices: (0|1|2|3)[],
   days: DayEntry[],
   pastNotices: PastNotice[],
   baseReset?: string,
@@ -230,10 +239,10 @@ function computeTriggers(
   for (let i = 0; i < all.length; i++) {
     const n = all[i]
     const isPast = i < pL
-    // 第一款？模擬日的 level1/2 都是款一(①/②)；歷史注意只有 level1 才是第一款，
-    //          level2 代表款二～款八，不計入規則①
-    const isFirst = isPast ? (n === 1) : (n >= 1)
-    const isAny   = n >= 1   // 任意注意（款一～款八）
+    // 第一款？模擬日的 level1/2 = 款一(①/②) 才算第一款；level3 = 款三(第三款) 不算。
+    //          歷史注意只有 level1 才是第一款，level2 代表款二～款八，不計入規則①
+    const isFirst = isPast ? (n === 1) : (n === 1 || n === 2)
+    const isAny   = n >= 1   // 任意注意（款一～款八，含款三）
     c1 = isFirst ? c1 + 1 : 0
     ca = isAny   ? ca + 1 : 0
     const si = i - pL
@@ -241,7 +250,7 @@ function computeTriggers(
   }
 
   // 10日 / 30日 視窗
-  const nm = new Map(filtPN.map(p => [p.dateStr, p.level as 0|1|2]))
+  const nm = new Map<string, 0|1|2|3>(filtPN.map(p => [p.dateStr, p.level as 0|1|2]))
   let t3 = -1, t4 = -1, lc10 = 0, lc30 = 0
   for (let i = 0; i < N; i++) {
     nm.set(calcISO(days[i]), notices[i])
@@ -351,6 +360,10 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
     return () => { cancelled = true }
   }, [])
 
+  // 款三：最近 60 日均量（股）；卡 0「假設當日量達 5×均量」開關
+  const [avg60Vol,     setAvg60Vol]     = useState<number | null>(null)
+  const [clause3VolMet, setClause3VolMet] = useState(false)
+
   const [queryCode,    setQueryCode]    = useState('')
   const [importStatus, setImportStatus] = useState<ImportStatus>({ loading: false })
 
@@ -397,8 +410,12 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
         const json = await stockRes.value.json()
         if (json.market === 'TWSE' || json.market === 'TPEx') setMarket(json.market)
         if (json.data?.length > 0) {
-          const all = json.data as { date: string; value: number }[]
+          const all = json.data as { date: string; value: number; volume?: number }[]
           setPriceHistory(all)
+          // 款三：最近 60 日均量（股）。當日為變數，用已知歷史日均量當基準
+          const vols = all.slice(-60).map(d => d.volume).filter((v): v is number => typeof v === 'number' && v > 0)
+          setAvg60Vol(vols.length ? vols.reduce((a, b) => a + b, 0) / vols.length : null)
+          setClause3VolMet(false)
           const recent = all.slice(-6)
           const newDays: DayEntry[] = recent.map(d => ({
             baseDateStr: d.date,
@@ -484,8 +501,12 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
         const json = await stockRes.value.json()
         if (json.market === 'TWSE' || json.market === 'TPEx') setMarket(json.market)
         if (json.data?.length > 0) {
-          const all = json.data as { date: string; value: number }[]
+          const all = json.data as { date: string; value: number; volume?: number }[]
           setPriceHistory(all)
+          // 款三：最近 60 日均量（股）。當日為變數，用已知歷史日均量當基準
+          const vols = all.slice(-60).map(d => d.volume).filter((v): v is number => typeof v === 'number' && v > 0)
+          setAvg60Vol(vols.length ? vols.reduce((a, b) => a + b, 0) / vols.length : null)
+          setClause3VolMet(false)
           const recent = all.slice(-6)
           const newDays: DayEntry[] = recent.map(d => ({ baseDateStr: d.date, bp: Math.round(d.value * 10) / 10 }))
           setDays(newDays); setSimPrices(newDays.map(() => null)); stockOk = true
@@ -626,10 +647,10 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
     lastDisposalDate && lastDisposalDate >= tdCutoff30 ? lastDisposalDate : undefined
 
   // 模擬注意序列
-  const notices: (0|1|2)[] = []
+  const notices: (0|1|2|3)[] = []
   for (let i = 0; i < days.length; i++) {
     if (simPrices[i] === null) break
-    notices.push(nLvl(simPrices[i]!, days[i].bp, market, mAvgPct))
+    notices.push(nLvl(simPrices[i]!, days[i].bp, market, mAvgPct, i === 0 && clause3VolMet))
   }
 
   // 模擬是否觸發處置（以 baseReset 為起算）— 用於下方「此路徑安全/觸發」結果列
@@ -854,7 +875,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
         const prevUnset       = i > 0 && simPrices[i-1] === null
         const isUnset         = chosen === null
         const dispPrice       = isUnset ? (i === 0 ? startPrice : (simPrices[i-1] ?? startPrice)) : chosen
-        const nl              = isUnset ? null : nLvl(chosen, d.bp, market, mAvgPct)
+        const nl              = isUnset ? null : nLvl(chosen, d.bp, market, mAvgPct, i === 0 && clause3VolMet)
         const pctChg          = ((dispPrice - d.bp) / d.bp * 100).toFixed(1)
         // 日內漲幅 = 對比昨日收盤（即前一張卡的價格）
         const prevClose       = i === 0 ? startPrice : (simPrices[i-1] ?? startPrice)
@@ -867,8 +888,9 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
         const borderCls = isTriggered ? 'border-red-600 bg-red-950/30'
           : isUnset            ? 'border-gray-700 opacity-70'
           : (nl === 1 || nl === 2) ? 'border-red-500 bg-red-950/20'   // 款一①② 皆紅（第一款）
+          : nl === 3           ? 'border-orange-500 bg-orange-950/20' // 款三（第三款，價量異常）
           :                      'border-green-600 bg-green-950/10'
-        const col = isUnset ? '#6b7280' : (nl===1 || nl===2) ? '#f87171' : '#4ade80'
+        const col = isUnset ? '#6b7280' : (nl===1 || nl===2) ? '#f87171' : nl===3 ? '#fb923c' : '#4ade80'
         const pd  = pctPos(t2, minP, maxP)
         const p1  = pctPos(t1, minP, maxP)
         const thumbPct = pctPos(isUnset ? snapTick((minP+maxP)/2) : chosen!, minP, maxP)
@@ -879,11 +901,15 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
             <div className="text-xs text-gray-500">基準 {fNum(d.bp)}（{baseMD(d)}）</div>
 
             <div className="flex gap-1 flex-wrap">
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-950/60 text-red-400 border border-red-800/60">
+              <span className="text-xs px-1.5 py-0.5 rounded bg-red-950/60 text-red-400 border border-red-800/60">
                 款一①≥{fNum(t1)}
               </span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-950/60 text-yellow-500 border border-yellow-800/60">
+              <span className="text-xs px-1.5 py-0.5 rounded bg-red-950/60 text-red-300 border border-red-800/60">
                 款一②≥{fNum(t2)}
+              </span>
+              <span title={`達此價→6日漲幅破 ${CLAUSE2[market].dupPct}%→款二防重複豁免失效`}
+                className="text-xs px-1.5 py-0.5 rounded bg-yellow-950/60 text-yellow-500 border border-yellow-800/60">
+                款二解豁≥{fNum(clause2NoExemptPrice(d.bp, market))}
               </span>
             </div>
 
@@ -914,8 +940,9 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
               {isUnset ? <span className="text-xs text-gray-600">未設定</span> : (
                 <span className={`text-xs font-bold px-2 py-0.5 rounded-full border
                   ${(nl===1 || nl===2) ? 'bg-red-900/50 text-red-300 border-red-700'
-                  :          'bg-green-900/50 text-green-300 border-green-700'}`}>
-                  {nl===1 ? '🔴 款一①' : nl===2 ? '🔴 款一②' : '🟢 無注意'}
+                  : nl===3   ? 'bg-orange-900/50 text-orange-300 border-orange-700'
+                  :            'bg-green-900/50 text-green-300 border-green-700'}`}>
+                  {nl===1 ? '🔴 款一①' : nl===2 ? '🔴 款一②' : nl===3 ? '🟠 款三' : '🟢 無注意'}
                 </span>
               )}
               {isTriggered && <span className="text-xs text-red-400 font-bold">⚠️ 觸發</span>}
@@ -945,7 +972,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                 style={{ left: `${thumbPct}%` }} />
             </div>
 
-            <div className="flex justify-between text-[10px] mt-4">
+            <div className="flex justify-between text-xs mt-4">
               <span className="text-green-500">↓跌停 {fNum(minP)}</span>
               <span className="text-red-400">漲停↑ {fNum(maxP)}</span>
             </div>
@@ -954,6 +981,47 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
       })}
     </div>
   )
+
+  /* ── 款三/四/五/七：需「當日量/籌碼」的款（僅下一交易日有意義，整列寬面板） ── */
+  const clause3Panel = (() => {
+    if (days.length === 0) return null
+    const d0 = days[0]
+    const { t3 } = thresh(d0.bp, market, mAvgPct)
+    const price0 = simPrices[0]
+    const pricePast = price0 != null && price0 >= t3
+    const volCeil   = avg60Vol != null ? Math.round(CLAUSE3_VOL_MULT * avg60Vol / 1000) : null
+    return (
+      <div className="mt-3 p-4 rounded-xl bg-gray-900 border border-gray-700">
+        <div className="text-sm font-bold text-gray-200 mb-2">
+          🔎 {calcMD(d0)} 下一交易日 — 需「當日量 / 籌碼」的款
+          <span className="text-gray-500 font-normal">（價格達門檻後，再看當日條件是否成立）</span>
+        </div>
+        <div className="flex flex-col gap-2 text-sm">
+          {/* 款三 — 可算 */}
+          <div className={pricePast ? 'text-orange-300' : 'text-gray-500'}>
+            {pricePast ? '✔' : '○'} <b className="text-base">款三（價量異常）</b>　價 ≥ <b>{fNum(t3)}</b>
+            {pricePast
+              ? (volCeil != null
+                  ? <>　已達 → 若當日量 &gt; <b className="text-orange-200">{volCeil.toLocaleString()} 張</b>（5×60日均量）即觸發</>
+                  : <span className="text-gray-500">　已達 →（無成交量資料）</span>)
+              : <span className="text-gray-500">　（價格未達款三門檻）</span>}
+          </div>
+          {pricePast && volCeil != null && (
+            <button onClick={() => setClause3VolMet(v => !v)}
+              className={`self-start text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+                clause3VolMet ? 'bg-orange-900/50 text-orange-200 border-orange-600'
+                              : 'bg-gray-800 text-gray-300 border-gray-700 hover:border-gray-500'}`}>
+              {clause3VolMet ? '☑ 假設當日量達標（已計入處置模擬）' : '☐ 假設當日量達標'}
+            </button>
+          )}
+          {/* 待接 / 無資料 */}
+          <div className="text-sm text-gray-500 border-t border-gray-800 pt-2">
+            ⏳ 待接 / 無資料：款四 週轉率&gt;10% ・ 款五 券商受託占比&gt;25% ・ 款六 本益比/股淨比 ・ 款七 券資比≥4倍
+          </div>
+        </div>
+      </div>
+    )
+  })()
 
   /* ── Rules status ─────────────────────────────────────────────────────────── */
   const rulesGrid = (
@@ -1157,12 +1225,15 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
             <p className="text-sm text-gray-400">
               <span className="text-red-400 font-semibold">🔴 款一①</span>（純價格）
               <span className="mx-1 text-red-400 font-semibold">🔴 款一②</span>（價格+起迄價差）
+              <span className="mx-1 text-orange-400 font-semibold">🟠 款三</span>（價量異常，僅首張卡）
               <span className="mx-1 text-green-400 font-semibold">🟢 無注意</span>
-              <span className="ml-1 text-gray-500">兩者皆屬第一款，連3日即處置</span>
+              <span className="ml-1 text-gray-500">款一連3日即處置；款三計入連5日/10日6次/30日12次</span>
             </p>
           </div>
 
           {grid}
+
+          {clause3Panel}
 
           {/* Result bar */}
           {notices.length > 0 && simResult && (
@@ -1275,6 +1346,29 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                   🛡️ <b>防重複豁免</b>：最近 30 日內已依第一款公布注意，且最近 <b>6 日累積漲幅 ≤ 25%（上市）/ 27%（上櫃）</b> → 第二款不適用。
                 </p>
                 <p className="text-xs text-gray-500 mt-1">表格「款二不豁免≥」= 計算日收盤達此價，6 日漲幅就超過 25%/27%，豁免失效、第二款成立。</p>
+              </section>
+
+              {/* 第三款 */}
+              <section className="border-t border-gray-800 pt-4">
+                <h3 className="text-orange-400 font-bold mb-1.5">🟠 第三款 — 價量同時異常</h3>
+                <p className="text-xs text-gray-500 mb-2">當日須<b>同時</b>達「6 日累積漲幅」與「當日成交量放大」兩條件。</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs border border-gray-800">
+                    <thead>
+                      <tr className="bg-gray-800/60 text-gray-400">
+                        <th className="text-left px-2 py-1.5 font-normal border-b border-gray-800">條件</th>
+                        <th className="text-left px-2 py-1.5 font-normal border-b border-gray-800 text-blue-400">上市</th>
+                        <th className="text-left px-2 py-1.5 font-normal border-b border-gray-800 text-purple-400">上櫃</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b border-gray-800/60"><td className="px-2 py-1.5">① 6 日累積漲幅</td><td className="px-2 py-1.5"><b>超過 25%</b></td><td className="px-2 py-1.5"><b>超過 27%</b></td></tr>
+                      <tr><td className="px-2 py-1.5">② 當日量 / 60 日均量</td><td className="px-2 py-1.5"><b>≥ 5 倍</b></td><td className="px-2 py-1.5"><b>≥ 5 倍</b></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-gray-500 mt-1.5">＋ 同樣要求「漲幅與全體<b>及</b>同類差幅<b>均</b> ≥ 20%」（已納入全體；同類未驗證）。第三款<b>不</b>計入規則①（連 3 日第一款），但計入規則②③④。</p>
+                <p className="text-xs text-amber-400/80 mt-1">⚠️ 量為當日變數無法預測 → 工具<b>僅在最近一日（下一交易日）那張卡</b>顯示款三的價格門檻與「量上限 = 5×60日均量」，並提供「假設當日量達標」開關來推演。法規另有「放大倍數與全體差 ≥ 4 倍」「週轉率/本益比除外」因資料不足未納入。</p>
               </section>
 
               {/* 處置規則 */}
