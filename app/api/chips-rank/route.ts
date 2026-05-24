@@ -8,7 +8,11 @@ import { loadRankWeek, saveRankWeek, listRankDates } from '@/lib/rankStore'
 
 const OPENDATA = 'https://opendata.tdcc.com.tw/getOD.ashx?id=1-5'
 
+// 全市場最新週快照記憶體快取（避免每次切換門檻/排序都重抓+重解析 ~67k 行）
+let cache: { at: number; date: string; map: Record<string, [number, number]> } | null = null
+
 async function fetchLatest(): Promise<{ date: string; map: Record<string, [number, number]> }> {
+  if (cache && Date.now() - cache.at < 6 * 60 * 60 * 1000) return { date: cache.date, map: cache.map }
   const res = await fetch(OPENDATA, { headers: { 'User-Agent': 'Mozilla/5.0' } })
   if (!res.ok) throw new Error(`opendata ${res.status}`)
   const text = await res.text()
@@ -32,6 +36,7 @@ async function fetchLatest(): Promise<{ date: string; map: Record<string, [numbe
     const p1000 = +t[14].toFixed(2)
     map[code] = [p400, p1000]
   }
+  cache = { at: Date.now(), date, map }
   return { date, map }
 }
 

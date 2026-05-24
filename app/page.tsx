@@ -10,6 +10,7 @@ import { SeriesConfig, DateRange, DATE_RANGE_LABELS, ChartType, PeriodSegment, C
 const ChartOverlay = dynamic(() => import('@/components/ChartOverlay'), { ssr: false })
 const PeriodChart  = dynamic(() => import('@/components/PeriodChart'),  { ssr: false })
 const ChipsView    = dynamic(() => import('@/components/ChipsView'),    { ssr: false })
+const ChipsScreener = dynamic(() => import('@/components/ChipsScreener'), { ssr: false })
 
 // ── Overlay mode persistence ──────────────────────────────────────────────
 const STORAGE_KEY = 'chart-overlay-series'
@@ -78,6 +79,7 @@ async function fetchSegment(seg: SegSaved) {
 // ─────────────────────────────────────────────────────────────────────────
 export default function Home() {
   const [mode, setMode] = useState<'overlay' | 'period' | 'disposal' | 'chips'>('overlay')
+  const [chipsTab, setChipsTab] = useState<'stock' | 'rank'>('stock')
 
   // ── Overlay state ──
   const [series, setSeries]             = useState<SeriesConfig[]>([])
@@ -284,7 +286,19 @@ export default function Home() {
           {mode === 'disposal' && (
             <DisposalTool sidebarOpen={sidebarOpen} onCloseSidebar={() => setSidebarOpen(false)} />
           )}
-          {mode === 'chips' && <ChipsView />}
+          {mode === 'chips' && (
+            <div className="h-full flex flex-col">
+              <div className="flex gap-1 px-3 pt-2 shrink-0">
+                <button onClick={() => setChipsTab('stock')}
+                  className={`text-xs px-3 py-1.5 rounded-t-lg transition-colors ${chipsTab === 'stock' ? 'bg-gray-900 text-amber-300 border-x border-t border-gray-700' : 'text-gray-500 hover:text-gray-300'}`}>個股趨勢</button>
+                <button onClick={() => setChipsTab('rank')}
+                  className={`text-xs px-3 py-1.5 rounded-t-lg transition-colors ${chipsTab === 'rank' ? 'bg-gray-900 text-amber-300 border-x border-t border-gray-700' : 'text-gray-500 hover:text-gray-300'}`}>篩選排行</button>
+              </div>
+              <div className="flex-1 min-h-0">
+                {chipsTab === 'stock' ? <ChipsView /> : <ChipsScreener />}
+              </div>
+            </div>
+          )}
         </div>
       </main>
 
