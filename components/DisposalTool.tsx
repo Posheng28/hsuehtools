@@ -316,6 +316,14 @@ function getRules(
   return { c1, ca, c10: windows.r3.count, c30: windows.r4.count, maxC30: 12, ref, windows }
 }
 
+// 盤中（台灣時間 < 14:00）丟掉「今天」那根未定案的即時價，只用已收盤資料；收盤定案後(≥14:00)才納入
+function dropUnclosedToday<T extends { date: string }>(arr: T[]): T[] {
+  const tw = new Date(Date.now() + 8 * 3600 * 1000) // UTC+8 牆鐘
+  const twToday = tw.toISOString().slice(0, 10)
+  if (arr.length && arr[arr.length - 1].date === twToday && tw.getUTCHours() < 14) return arr.slice(0, -1)
+  return arr
+}
+
 /* ── Component ─────────────────────────────────────────────────────────────── */
 export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   const today      = fmtISO(new Date())
@@ -410,7 +418,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
         const json = await stockRes.value.json()
         if (json.market === 'TWSE' || json.market === 'TPEx') setMarket(json.market)
         if (json.data?.length > 0) {
-          const all = json.data as { date: string; value: number; volume?: number }[]
+          const all = dropUnclosedToday(json.data as { date: string; value: number; volume?: number }[])
           setPriceHistory(all)
           // 款三：最近 60 日均量（股）。當日為變數，用已知歷史日均量當基準
           const vols = all.slice(-60).map(d => d.volume).filter((v): v is number => typeof v === 'number' && v > 0)
@@ -501,7 +509,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
         const json = await stockRes.value.json()
         if (json.market === 'TWSE' || json.market === 'TPEx') setMarket(json.market)
         if (json.data?.length > 0) {
-          const all = json.data as { date: string; value: number; volume?: number }[]
+          const all = dropUnclosedToday(json.data as { date: string; value: number; volume?: number }[])
           setPriceHistory(all)
           // 款三：最近 60 日均量（股）。當日為變數，用已知歷史日均量當基準
           const vols = all.slice(-60).map(d => d.volume).filter((v): v is number => typeof v === 'number' && v > 0)
