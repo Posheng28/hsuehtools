@@ -963,9 +963,9 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                 ${prevUnset ? 'opacity-30 pointer-events-none' : 'cursor-grab active:cursor-grabbing'}`}
               onMouseDown={e => startDrag(e, i)} onTouchStart={e => startDrag(e, i)}
             >
-              {/* 款一①② 皆紅：t2 起即第一款 → 綠到 t2、之後全紅 */}
+              {/* 綠/紅界線 = 兩門檻較低者（任一款一成立即紅）；低價股款一②(價差)可能高於款一① → 用 min/max 不寫死順序 */}
               <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-2.5 rounded-full pointer-events-none"
-                style={{ background: `linear-gradient(to right,#22c55e ${pd}%,#f87171 ${pd}%,#ef4444 ${p1}%,#ef4444 100%)` }} />
+                style={{ background: `linear-gradient(to right,#22c55e ${Math.min(pd, p1)}%,#f87171 ${Math.min(pd, p1)}%,#f87171 ${Math.max(pd, p1)}%,#ef4444 ${Math.max(pd, p1)}%,#ef4444 100%)` }} />
               {/* 款一② 門檻線（淺紅） */}
               <div className="absolute top-1/2 -translate-y-1/2 w-0.5 h-6 rounded pointer-events-none"
                 style={{ left: `${pd}%`, background: '#f87171' }} />
