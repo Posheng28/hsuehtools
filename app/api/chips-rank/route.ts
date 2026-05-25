@@ -12,6 +12,30 @@ const OPENDATA = 'https://opendata.tdcc.com.tw/getOD.ashx?id=1-5'
 // 全市場最新週快照記憶體快取（避免每次切換門檻/排序都重抓+重解析 ~67k 行）
 let cache: { at: number; date: string; map: Record<string, [number, number]> } | null = null
 
+// 官方外資持股% 全市場 map（DJ 缺資料的股的補洞用，僅扣外資）
+let fCache: { at: number; map: Record<string, number> } | null = null
+async function fetchForeignMap(date: string): Promise<Record<string, number>> {
+  if (fCache && Date.now() - fCache.at < 6 * 60 * 60 * 1000) return fCache.map
+  const map: Record<string, number> = {}
+  const num = (s: unknown) => parseFloat(String(s).replace(/,/g, ''))
+  try { // 上市 MI_QFIIS：持股% = 持股股數/發行（row[5]/row[3]，已對拍 DJ）
+    const j = await (await fetch(`https://www.twse.com.tw/rwd/zh/fund/MI_QFIIS?date=${date}&selectType=ALLBUT0999&response=json`, { headers: { 'User-Agent': 'Mozilla/5.0' } })).json()
+    if (j.stat === 'OK') for (const r of j.data as unknown[][]) {
+      const c = String(r[0]).trim(), iss = num(r[3]), held = num(r[5])
+      if (/^[1-9]\d{3}$/.test(c) && iss > 0 && !isNaN(held)) map[c] = +(held / iss * 100).toFixed(2)
+    }
+  } catch { /* ignore */ }
+  try { // 上櫃 tpex_3insti_qfii：PercentageOfSharesOC/FMIHeld
+    const arr = await (await fetch('https://www.tpex.org.tw/openapi/v1/tpex_3insti_qfii', { headers: { 'User-Agent': 'Mozilla/5.0' } })).json() as Record<string, string>[]
+    for (const r of arr) {
+      const c = String(r.SecuritiesCompanyCode).trim(), pct = parseFloat(String(r['PercentageOfSharesOC/FMIHeld']).replace('%', ''))
+      if (/^[1-9]\d{3}$/.test(c) && !isNaN(pct) && map[c] == null) map[c] = pct
+    }
+  } catch { /* ignore */ }
+  fCache = { at: Date.now(), map }
+  return map
+}
+
 async function fetchLatest(): Promise<{ date: string; map: Record<string, [number, number]> }> {
   if (cache && Date.now() - cache.at < 6 * 60 * 60 * 1000) return { date: cache.date, map: cache.map }
   const res = await fetch(OPENDATA, { headers: { 'User-Agent': 'Mozilla/5.0' } })
@@ -68,11 +92,13 @@ export async function GET(req: NextRequest) {
     const prev = prevDate ? await loadRankWeek(prevDate) : null
     const idx = use1000 ? 1 : 0
 
-    // 內部大戶：載入已爬取的三大法人 legalStore
+    // 內部大戶：載入已爬取的三大法人 legalStore + 官方外資補洞 map
     const legalMap = new Map<string, Record<string, number[]> | null>()
     let crawled = 0
+    let foreignMap: Record<string, number> = {}
     if (net) {
       for (const code of await listLegalCodes()) { legalMap.set(code, await loadLegal(code)); crawled++ }
+      foreignMap = await fetchForeignMap(fresh.date)
     }
 
     let rows = Object.entries(latest).map(([code, v]) => {
@@ -80,16 +106,19 @@ export async function GET(req: NextRequest) {
       const bigPrev = prev?.[code]?.[idx]
       if (net) {
         const lm = legalMap.get(code) ?? null
-        const lNow = legalAt(lm, fresh.date)
-        if (lNow == null) return null // 尚未爬到三大法人 → 不列入內部大戶排行
+        const ldj = legalAt(lm, fresh.date)
+        let lNow: number, src: 'dj' | 'qfii' | 'none'
+        if (ldj != null) { lNow = ldj; src = 'dj' }              // 完整三大法人
+        else if (foreignMap[code] != null) { lNow = foreignMap[code]; src = 'qfii' } // 僅外資(官方)
+        else { lNow = 0; src = 'none' }                          // 無法人資料 → 視同 0（法人≈0）
         const cur = +(big - lNow).toFixed(2)
-        const lPrev = prevDate ? legalAt(lm, prevDate) : null
+        const lPrev = src === 'dj' && prevDate ? legalAt(lm, prevDate) : null
         const d1 = bigPrev != null && lPrev != null ? +((big - lNow) - (bigPrev - lPrev)).toFixed(2) : null
-        return { code, pct: cur, d1 }
+        return { code, pct: cur, d1, src }
       }
       const d1 = bigPrev != null ? +(big - bigPrev).toFixed(2) : null
-      return { code, pct: big, d1 }
-    }).filter(Boolean) as { code: string; pct: number; d1: number | null }[]
+      return { code, pct: big, d1, src: 'dj' as const }
+    }).filter(Boolean) as { code: string; pct: number; d1: number | null; src: 'dj' | 'qfii' | 'none' }[]
 
     rows.sort((a, b) => sort === 'level' ? b.pct - a.pct : ((b.d1 ?? -999) - (a.d1 ?? -999)))
 

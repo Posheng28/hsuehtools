@@ -5,7 +5,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 // 全市場大戶佔比排行（籌碼篩選器）。資料來自 /api/chips-rank（TDCC opendata 最新週）。
 // 近1週增減需累積 ≥2 週快照才會出現（accumulate-forward）；2/3 週增減隨週數長出。
 
-interface Row { code: string; pct: number; d1: number | null }
+interface Row { code: string; pct: number; d1: number | null; src?: 'dj' | 'qfii' | 'none' }
 interface Resp { date: string; prevDate: string | null; lots: number; net?: boolean; total: number; crawled?: number; hasDelta: boolean; rows: Row[] }
 
 export default function ChipsScreener() {
@@ -93,6 +93,9 @@ export default function ChipsScreener() {
       {data && !data.hasDelta && (
         <p className="text-xs text-amber-400/80">※ 近1週增減需累積 ≥2 週快照才會出現（目前僅 {fmtDate(data.date)} 一週；下週起自動長出）。先以「大戶佔比」排行。</p>
       )}
+      {net && (
+        <p className="text-xs text-gray-600">代號標記：<span className="text-sky-500">外</span>=DJ無、僅扣官方外資；<span className="text-gray-500">＊</span>=無法人資料、法人視同0（內部大戶≈大戶）；無標記=已扣完整三大法人。</p>
+      )}
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <table className="w-full text-sm">
@@ -108,7 +111,11 @@ export default function ChipsScreener() {
             {data?.rows.map((r, i) => (
               <tr key={r.code} className="border-b border-gray-800/50 hover:bg-gray-800/40">
                 <td className="py-1.5 px-2 text-gray-500">{i + 1}</td>
-                <td className="py-1.5 px-2 text-gray-200 font-semibold">{r.code}</td>
+                <td className="py-1.5 px-2 text-gray-200 font-semibold">
+                  {r.code}
+                  {net && r.src === 'qfii' && <span className="ml-1 text-[10px] text-sky-500" title="DJ無資料，僅扣官方外資">外</span>}
+                  {net && r.src === 'none' && <span className="ml-1 text-[10px] text-gray-600" title="無法人資料，法人視同0（內部大戶≈大戶）">＊</span>}
+                </td>
                 <td className="py-1.5 px-2 text-right text-amber-300 font-mono">{r.pct.toFixed(2)}%</td>
                 <td className="py-1.5 px-2 text-right font-mono"
                   style={{ color: r.d1 == null ? '#6b7280' : r.d1 > 0 ? '#f87171' : r.d1 < 0 ? '#4ade80' : '#9ca3af' }}>
