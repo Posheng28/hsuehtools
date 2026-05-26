@@ -357,18 +357,20 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   }>({ TWSE: null, TPEx: null })
   useEffect(() => {
     let cancelled = false
-    fetch('/api/market-avg')
-      .then(r => r.json())
-      .then(d => {
-        if (cancelled || d.error) return
-        setMarketAvg({
-          TWSE: d.twse?.avg ?? null,
-          TPEx: d.tpex?.avg ?? null,
-          baseDate: d.baseDate,
-          lastClosedDate: d.lastClosedDate,
-        })
-      })
-      .catch(() => { /* 取不到就退回純價格門檻 */ })
+    // 失敗或上市/上櫃任一 avg 為 null（暫時性，如全市場資料被限流）時重試，避免卡在「載入中」
+    const load = async (attempt = 0) => {
+      try {
+        const r = await fetch(`/api/market-avg${attempt ? `?bust=1` : ''}`)
+        const d = await r.json()
+        if (cancelled) return
+        if (!d.error) {
+          setMarketAvg({ TWSE: d.twse?.avg ?? null, TPEx: d.tpex?.avg ?? null, baseDate: d.baseDate, lastClosedDate: d.lastClosedDate })
+          if ((d.twse?.avg != null && d.tpex?.avg != null) || attempt >= 4) return // 都有值或試夠了
+        }
+      } catch { /* 重試 */ }
+      if (!cancelled && attempt < 4) setTimeout(() => load(attempt + 1), 4000) // 4 秒後重試（最多 5 次）
+    }
+    load()
     return () => { cancelled = true }
   }, [])
 

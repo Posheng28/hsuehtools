@@ -35,8 +35,9 @@ const isOrdinary = (code: string) => /^[1-9]\d{3}$/.test(code)
 
 interface TableResp { tables?: { title?: string; data?: unknown[][] }[] }
 
-/** 上市：回傳 { code: 當日漲跌幅% }，非交易日回 null */
+/** 上市：回傳 { code: 當日漲跌幅% }，非交易日/抓取失敗回 null（不拋錯，避免整支 500） */
 async function fetchTWSE(ymd: string): Promise<Record<string, number> | null> {
+ try {
   const url = `https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date=${ymd}&type=ALLBUT0999`
   const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
   if (!res.ok) return null
@@ -57,10 +58,12 @@ async function fetchTWSE(ymd: string): Promise<Record<string, number> | null> {
     out[code] = (diff / prev) * 100
   }
   return Object.keys(out).length ? out : null
+ } catch { return null }
 }
 
-/** 上櫃：回傳 { code: 當日漲跌幅% }，非交易日回 null */
+/** 上櫃：回傳 { code: 當日漲跌幅% }，非交易日/抓取失敗回 null（不拋錯） */
 async function fetchTPEx(ymd: string): Promise<Record<string, number> | null> {
+ try {
   const url = `https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=${toSlash(ymd)}&type=EW&id=&response=json`
   const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
   if (!res.ok) return null
@@ -79,6 +82,7 @@ async function fetchTPEx(ymd: string): Promise<Record<string, number> | null> {
     out[code] = (diff / prev) * 100
   }
   return Object.keys(out).length ? out : null
+ } catch { return null }
 }
 
 /** 逐檔連乘 days[1..] 的漲跌幅 → 各檔累積%，再對全市場取簡單平均 */
