@@ -48,7 +48,7 @@ async function fetchTwseIndexMonth(ymd: string): Promise<Record<string, number>>
   } catch { return {} }
 }
 
-const trunc2 = (x: number) => Math.trunc(x * 100) / 100   // 每日漲跌% 取小數 2 位無條件捨去(向零)
+const trunc2 = (x: number) => { const v = Math.round(x * 1e8) / 1e8; return Math.trunc(v * 100) / 100 }   // 每日漲跌% 取小數 2 位無條件捨去(向零)
 const isOrd  = (c: string) => /^[1-9]\d{3}$/.test(c)       // 普通股(排除 ETF/ETN/特別股)
 interface MiResp { tables?: { title?: string; data?: unknown[][] }[] }
 /** 上市某日 普通股 { code: 當日漲跌幅% }；非交易日/失敗回 null（含重試，避免 API 偶爾掉檔） */

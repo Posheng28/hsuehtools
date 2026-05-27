@@ -21,7 +21,7 @@ interface Props { sidebarOpen: boolean; onCloseSidebar: () => void }
 /* ── Constants ─────────────────────────────────────────────────────────────── */
 const OFFSET = 6
 // 每日漲跌% 取小數 2 位「無條件捨去(向零)」— 注意股累積漲幅的官方逐日進位法（與看盤工具一致）
-const trunc2 = (x: number) => Math.trunc(x * 100) / 100
+const trunc2 = (x: number) => { const v = Math.round(x * 1e8) / 1e8; return Math.trunc(v * 100) / 100 }
 
 /* ── 台股 tick（最小升降單位，依股價級距）─────────────────────────────────────── */
 // <10:0.01　10~<50:0.05　50~<100:0.1　100~<500:0.5　500~<1000:1　≥1000:5
