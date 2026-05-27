@@ -387,6 +387,10 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   const [peData, setPeData] = useState<{ pe:number|null; pbr:number|null; mktPe:number|null; mktPbr:number|null }|null>(null)
   const [clause6Assume, setClause6Assume] = useState(false)
 
+  // 款十二：借券資料
+  const [sblData, setSblData] = useState<{ rate:number|null; amp:number|null }|null>(null)
+  const [clause12Assume, setClause12Assume] = useState(false)
+
   const [queryCode,    setQueryCode]    = useState('')
   const [importStatus, setImportStatus] = useState<ImportStatus>({ loading: false })
 
@@ -449,6 +453,12 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           stockOk = true
           // 款六：抓 PE/PBR
           fetch(`/api/peratio?market=${json.market}&code=${code}&date=${todayTD.replace(/-/g,'')}`).then(r=>r.json()).then(setPeData).catch(()=>setPeData(null))
+          // 款十二：借券率/放大
+          {
+            const winYMDs = all.slice(-6).map(d => d.date.replace(/-/g,''))
+            const ampYMDs = all.slice(-20).map(d => d.date.replace(/-/g,''))
+            fetch(`/api/sbl?market=${json.market}&code=${code}&win=${winYMDs.join(',')}&amp=${ampYMDs.join(',')}`).then(r=>r.json()).then(setSblData).catch(()=>setSblData(null))
+          }
         }
       }
       if (!stockOk) {
@@ -537,6 +547,12 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           setDays(newDays); setSimPrices(newDays.map(() => null)); stockOk = true
           // 款六：抓 PE/PBR
           fetch(`/api/peratio?market=${json.market}&code=${code}&date=${todayTD.replace(/-/g,'')}`).then(r=>r.json()).then(setPeData).catch(()=>setPeData(null))
+          // 款十二：借券率/放大
+          {
+            const winYMDs = all.slice(-6).map(d => d.date.replace(/-/g,''))
+            const ampYMDs = all.slice(-20).map(d => d.date.replace(/-/g,''))
+            fetch(`/api/sbl?market=${json.market}&code=${code}&win=${winYMDs.join(',')}&amp=${ampYMDs.join(',')}`).then(r=>r.json()).then(setSblData).catch(()=>setSblData(null))
+          }
         }
       }
       if (!stockOk) { setImportStatus({ loading: false, error: `找不到「${code}」的股價資料` }); return }
@@ -705,7 +721,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
     c2: i === 0 ? clause2ForEngine() : null,
     volMet: i === 0 && clause3VolMet,
     pe: i === 0 ? pePredict(price) : null, pbr: i === 0 ? pbrPredict(price) : null, mktPe: peData?.mktPe ?? null, mktPbr: peData?.mktPbr ?? null, c6Assume: i === 0 && clause6Assume,
-    sblRate: null, sblAmp: null, c12Assume: false,
+    sblRate: i === 0 ? (sblData?.rate ?? null) : null, sblAmp: i === 0 ? (sblData?.amp ?? null) : null, c12Assume: i === 0 && clause12Assume,
   })
 
   // 處置生效日是否在最近30個交易日內？（以最近交易日為基準）
@@ -1120,6 +1136,31 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                   </button>
                 )}
                 {c6.fired && (
+                  <span className="text-xs text-orange-400">（已勾選假設條件，計入處置模擬）</span>
+                )}
+              </div>
+            )
+          })()}
+          {/* 款十二 — 借券 */}
+          {(() => {
+            const c12 = evalCard(0, simPrices[0] ?? startPrice).find(r => r.id === '12')
+            if (!c12) return null
+            const priceHit = c12.fired || c12.blocked
+            return (
+              <div className={`flex flex-col gap-1.5 border-t border-gray-800 pt-2 ${priceHit ? 'text-orange-300' : 'text-gray-500'}`}>
+                <div>
+                  {priceHit ? '✔' : '○'} <b className="text-base">款十二（借券賣出異常）</b>　{c12.detail}
+                </div>
+                {c12.blocked && (
+                  <button
+                    onClick={() => setClause12Assume(v => !v)}
+                    className={`self-start text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+                      clause12Assume ? 'bg-orange-900/50 text-orange-200 border-orange-600'
+                                     : 'bg-gray-800 text-gray-300 border-gray-700 hover:border-gray-500'}`}>
+                    {clause12Assume ? '☑ 假設當日借券達標（已計入處置模擬）' : '☐ 假設當日借券達標'}
+                  </button>
+                )}
+                {c12.fired && (
                   <span className="text-xs text-orange-400">（已勾選假設條件，計入處置模擬）</span>
                 )}
               </div>
