@@ -1,4 +1,4 @@
-import { slugBySitca } from './sources'
+import { slugBySitca, ETFS } from './sources'
 import { joyPeriod } from './period'
 import type { FundSnapshot, FundHolding, ReportType } from './types'
 
@@ -47,4 +47,30 @@ export function transformHoldings(
   }
   for (const s of groups.values()) s.holdings.sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999))
   return [...groups.values()]
+}
+
+interface JoyEtf {
+  name?: string
+  company?: string
+  manager?: string
+  latest_date: string
+  holdings: { stock_id: string; stock_name: string; weight_pct: number }[]
+}
+
+export function transformEtfHoldings(data: Record<string, JoyEtf>, fetchedAt: string): FundSnapshot[] {
+  const tracked = new Set(ETFS.map(e => e.fundId))
+  const out: FundSnapshot[] = []
+  for (const [ticker, v] of Object.entries(data)) {
+    if (!tracked.has(ticker)) continue
+    out.push({
+      fundId: ticker,
+      reportType: 'etf_daily',
+      period: v.latest_date,
+      source: 'joy88-seed',
+      fetchedAt,
+      holdings: v.holdings.map(h => ({ code: h.stock_id, name: h.stock_name, weightPct: h.weight_pct })),
+      meta: v.manager ? { manager: v.manager } : undefined,
+    })
+  }
+  return out
 }
