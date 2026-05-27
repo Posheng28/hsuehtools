@@ -1166,9 +1166,14 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
               </div>
             )
           })()}
+          {/* 款四、五 — 無公開 API */}
+          <div className="text-xs text-gray-500 border-t border-gray-800 pt-2 space-y-1">
+            <div>○ <b>款四（週轉率）</b>　需流通在外股數（無公開批量 API）→ 無法自動判定</div>
+            <div>○ <b>款五（單一券商買賣占比）</b>　券商分點全量無公開 API → 無法自動判定</div>
+          </div>
           {/* 待接 / 無資料 */}
           <div className="text-sm text-gray-500 border-t border-gray-800 pt-2">
-            ⏳ 待接 / 無資料：款四 週轉率&gt;10% ・ 款五 券商受託占比&gt;25% ・ 款七 券資比≥4倍
+            ⏳ 待接：款七 券資比≥4倍
           </div>
         </div>
       </div>
