@@ -28,8 +28,7 @@ type ClauseInput = {
   market: Market
   closes: number[]          // 統一收盤路徑(基準..計算日)，計算日為待測價
   i: number                 // 卡索引（窗口位置）
-  marketAvg6: number|null    // 全體 6日累積%(差幅基底)
-  marketAvg30/60/90: …       // 款二差幅基底
+  marketAvg6: number|null    // 全體 6日累積%(款一差幅基底)
   peRatio/pbRatio: number|null; mktAvgPE/PBR: number|null   // 款六
   sblRate6: number|null; sblAmp: number|null                // 款十二
   volRatio: number|null      // 款三(當日量/60日均量)
@@ -59,8 +58,9 @@ function evalClauses(input): ClauseResult[]
 ### 款一①②（已有，移入引擎）
 `累積 = Σ trunc2(逐日%)`(基準→計算日前一日 = knownSum) + `trunc2(計算日當日%)`。門檻價 `prevClose×(1+(max(門檻%, 全體6日+20)−knownSum)/100)` nextTick；款一② 另 `clTick(spreadBase+gap價差40)`。`first=true`。
 
-### 款二（補完整）
-`pct_N = close(計算日)/close(窗口第N天第一日)−1`（比值，N=30/60/90，逐個由短到長取最先達標）。**達標 = pct_N > 門檻% AND (pct_N − marketAvgN) ≥ 80% AND (同類豁免或同類差幅≥80%)**。沿用防重複豁免（30日內有款一注意 且 6日累積 ≤ dupPct 27%上櫃 → 不適用）。`first=false`、`any=true`。**新增差幅**：需 marketAvg30/60/90（見 API）。同類無資料 → 標估計、比照款一同類豁免處理。
+### 款二（移入引擎，維持純價格）
+`pct_N = close(計算日)/close(窗口第一天)−1`（比值，N=30/60/90，由短到長取最先達標）。**達標 = pct_N > 門檻%**（上櫃 100/140/160）。沿用防重複豁免（30日內有款一注意 且 6日累積 ≤ dupPct 27%上櫃 → 不適用）。`first=false`、`any=true`。
+**差幅≥80% 不計算**（使用者決定）：30/60/90 日漲幅動輒 >100%，差幅(vs 全體~20%) 幾乎必 ≥80%、非 binding gate；故**不抓全體 30/60/90**，款二視同差幅已達。起迄定義已驗證（波若威90日=219.37、金山電30日=126.15 = first→當日）。
 
 ### 款三（已有，移入引擎；量差幅略過）
 6日累積 > 27%(上櫃)/25%(上市) + 差幅≥20% + 當日量 ≥ 5×60日均量。`assumeDaily` 控當日量。「量差幅≥4×全市場」資料不足、略過並標註。
@@ -77,7 +77,8 @@ function evalClauses(input): ClauseResult[]
 ## 新 API 端點
 - `app/api/peratio/route.ts`：`?code=&date=` → 個股 PE/PBR + 全體加權均 PE/PBR。上櫃 `tpex_mainboard_peratio_analysis`；上市 TWSE `BWIBBU`(個股本益比/殖利率/股價淨值比)。加權均：以發行股數×收盤為權重 group 全市場（普通股）。快取 6h。
 - `app/api/sbl/route.ts`：`?code=&date=` → 窗口 6 日借券賣出量 + 成交量 + 60日均借券。上櫃 `margin/sbl`；上市 TWSE 借券端點（計畫階段確認）。快取 6h。
-- `app/api/market-avg`：擴充回傳 30/60/90 日 全體累積（供款二差幅）。上櫃用櫃買指數 90 日序列（`tpex_index` 僅近月 → 計畫確認歷史足夠；不足則該款差幅標 null=估計）。上市用等權（需逐檔 90 日，成本高 → 計畫評估快取策略）。
+- **款六/十二 上市+上櫃都接**（兩市場各自的官方端點）。
+- `app/api/market-avg`：**不擴充**（款二差幅不做，見款二段）。維持現狀（6 日：上市等權／上櫃櫃買指數）。
 
 ## trunc2 精度修正
 `const trunc2 = (x:number) => { const v = Math.round(x*1e8)/1e8; return Math.trunc(v*100)/100 }`。先四捨到 8 位殺浮點雜訊再截斷向零。套用：DisposalTool `knownSumOf`、market-avg `twseEqAvg`。驗收：(47.3/43-1)*100 → 10.00（非 9.99）。
@@ -85,22 +86,21 @@ function evalClauses(input): ClauseResult[]
 ## 處置計數（沿用語意）
 `first`(款一) 計規則①(連3日)；`any`(任一款) 計規則②③④(連5日/10日6/30日12)。歷史注意 pastNotices：含第一款字樣=level1(first)、其餘=level2(any)。款二/六/十一/十二 模擬日 → level2(any-not-first)。
 
-## 範圍外（資料卡死，明確標註）
+## 範圍外（明確標註）
 - 款四 週轉率：分母需「流通在外股數」，`發行股數` 算出差 3 倍；無免費批量 API。
 - 款五 單一券商買賣占比：券商分點全量無公開 API（僅熱門前 30 排行）。
-- 款三 量差幅≥4×全市場、款六 同類加權均、同類差幅：資料不足或未接，標估計。
+- 款二 差幅80%、款三 量差幅≥4×全市場、款六 同類加權均、同類差幅：不算（款二漲幅必超過、其餘資料不足），標註為估計/未納差幅。
 
 ## 驗收標準（5/26 注意窗口）
 - 款一 3581=27.47/6182=44.72/5321=59.47/4127=48.30（trunc2 修正後 4127 必為 48.30）。
 - 款十一 弘塑價差535/順達110/茂達87.5/勤凱92。
 - 款六 波若威 PE141.20/PBR30.78 達標。
 - 款十二 4128 借券率10.39%/4174 11.21%。
-- 款二 波若威90日219.37、金山電30日126.15；差幅80%閘門以櫃買指數30/60/90日計。
+- 款二 波若威90日219.37、金山電30日126.15（純價格 first→當日；差幅80%不計算）。
 - `trunc2(精度)`：47.3/43.0 → 10.00。
 - 原子引擎純函式可單測，DisposalTool 與（未來）回測共用。
 
 ## 風險 / 待計畫釘死
 1. 款十一 級距邊界（floor/ceil、含不含 300）→ 用 attstock std11 + 法規原文確認。
-2. market-avg 30/60/90 日：`tpex_index` 歷史長度、上市等權 90 日逐檔成本 → 快取/降頻策略；取不到該款差幅標 null(估計)。
-3. 上市 PE/PBR、借券端點（TWSE BWIBBU / 借券）欄位 → 計畫階段抓一筆驗證。
+2. 上市 PE/PBR、借券端點（TWSE BWIBBU / 借券）欄位 + 上櫃 `peratio`/`sbl` 欄位 → 計畫階段各抓一筆驗證。
 4. 引擎重構動到 thresh/nLvl/computeTriggers + 卡片/面板渲染，需回歸測 3581 上櫃 與一檔上市，確保既有款一①②③/處置計數不退化。
