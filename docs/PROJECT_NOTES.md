@@ -107,15 +107,14 @@
 | `notices/route.ts` | 注意紀錄 | TWSE `rwd/zh/announcement/notice`；TPEx `www/zh-tw/bulletin/attention`（直接回 JSON `tables[0].data`） |
 | `disposal/route.ts` | 單股處置 | **TWSE 是 `announcement/punish`**（不是 disposal！）；**TPEx 是 `bulletin/disposal`**（不是 disposition！） |
 | `disposal-list/route.ts` | 全市場處置清單 | 同上兩個 URL，不帶 code |
-| `market-avg/route.ts` | 官方加權指數逐日漲跌%相加（上市 TAIEX、上櫃櫃買指數），款一差幅 ≥ 20% 基底 | 見下方專段 |
+| `market-avg/route.ts` | 全體均值（款一差幅 ≥ 20% 基底）；**上市/上櫃算法不同**：上市=普通股等權、上櫃=櫃買指數 | 見下方專段 |
 
-### `market-avg` — 全體累積漲幅（差幅 ≥ 20% 用）
-- **全體均值 = 官方發行量加權指數的「逐日漲跌%相加（全精度）」**：上市用 TAIEX（發行量加權股價指數）、上櫃用櫃買指數。**不逐檔抓全市場股價、不是等權平均、不是連乘。**
-- **資料源**：
-  - 上市：`twse.com.tw/indicesReport/MI_5MINS_HIST?response=json&date=YYYYMMDD`（ROC 日期；回整月資料；`row[4]`=收盤指數）。
-  - 上櫃：`tpex.org.tw/openapi/v1/tpex_index`（欄位 `{Date:YYYYMMDD, Close}`；回近一個月）。
-- **演算法**：窗口由 `?date=`（個股最近收盤日）決定，取 ≤ 該日最近 **6** 交易日（**5** 個間隔）→ 對每個間隔計算 `(close[i]/close[i-1]−1)×100`（全精度）→ **逐日相加**（非連乘），得到 `avg`（百分比，保留全精度）。
-- 回傳 `{ knownIntervals, baseDate, lastClosedDate, twse:{avg}, tpex:{avg} }`；`avg` 取不到為 `null`（個股端退回純價格門檻）。結果快取 6h（key=lastClosedDate），`bust=1` 清。
+### `market-avg` — 全體累積漲幅（差幅 ≥ 20% 用）⚠️ 上市/上櫃兩套算法
+- **上市 = 全體普通股「逐日漲跌%(2 位無條件捨去) 相加」再等權(簡單)平均**（**非** TAIEX 指數）。逐檔抓 `twse.com.tw/exchangeReport/MI_INDEX?response=json&date=YYYYMMDD&type=ALLBUT0999`（`row[0]`=代號、`row[8]`=收盤、`row[9]`=漲跌方向(green=跌)、`row[10]`=漲跌價差），只取普通股 `[1-9]\d{3}`，6 日窗口交集後等權平均（`fetchTwseStocks`+`twseEqAvg`，含重試避免掉檔）。
+- **上櫃 = 櫃買指數(發行量加權) 逐日漲跌% 相加(全精度)**。`tpex.org.tw/openapi/v1/tpex_index`（`{Date:YYYYMMDD, Close}`，近一個月）。
+- 上市交易日窗口用 TAIEX `MI_5MINS_HIST?response=json&date=YYYYMMDD`（ROC 日期、`row[4]`=收盤指數）定出，再對那 6 日逐檔抓個股。
+- **窗口**由 `?date=`（個股最近收盤日）決定，取 ≤ 該日最近 **6** 交易日（**5** 間隔）。回傳 `{ knownIntervals, baseDate, lastClosedDate, twse:{avg}, tpex:{avg} }`；`avg` 取不到為 `null`（個股端退回純價格門檻）。結果快取 6h（key=endYMD），`bust=1` 清。
+- **對拍 attstock（2026/05, 5/19→5/26）**：上櫃 9.98（=櫃買指數，本工具一致）；上市 attstock=4.99、本工具普通股等權=**5.24**，差 ~0.25 推測為 attstock 的「全體上市」**排除已被注意/處置的極端漲幅股**（無法從外部精確還原其清單）；此 0.25 對差幅閘門（mAvg+20）幾乎不影響觸發。
 
 ### 處置 API 欄位對應（重要）
 - **TWSE punish**：`row[2]`=代號、`row[3]`=名稱、`row[6]`=處置起迄時間（斜線格式 `115/05/08～115/05/21`）
