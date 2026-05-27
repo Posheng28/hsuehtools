@@ -937,7 +937,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
         const dispPrice       = isUnset ? (i === 0 ? startPrice : (simPrices[i-1] ?? startPrice)) : chosen
         const rs              = isUnset ? [] : evalCard(i, chosen!)
         const firedFirst      = rs.some(r => (r.id === '1①' || r.id === '1②') && r.fired)
-        const fired11         = rs.some(r => r.id === '11' && r.fired)
+        const firedAny        = rs.some(r => r.fired)
         // 累積漲幅(逐日相加) = 已知 5 間隔相加 + 計算日當日漲跌%（同樣逐日 2 位無條件捨去）
         const pctChg          = (sumKnown + (prevClose0 > 0 ? trunc2((dispPrice - prevClose0) / prevClose0 * 100) : 0)).toFixed(2)
         // 日內漲幅 = 對比昨日收盤（即前一張卡的價格）
@@ -950,10 +950,10 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
 
         const borderCls = isTriggered ? 'border-red-600 bg-red-950/30'
           : isUnset      ? 'border-gray-700 opacity-70'
-          : firedFirst   ? 'border-red-500 bg-red-950/20'   // 款一①② 皆紅（第一款）
-          : fired11      ? 'border-orange-500 bg-orange-950/20' // 款十一
+          : firedFirst   ? 'border-red-500 bg-red-950/20'      // 款一①② 皆紅（第一款）
+          : firedAny     ? 'border-orange-500 bg-orange-950/20' // 其他注意款（款二/三/六/十一/十二…）
           :                'border-green-600 bg-green-950/10'
-        const col = isUnset ? '#6b7280' : firedFirst ? '#f87171' : fired11 ? '#fb923c' : '#4ade80'
+        const col = isUnset ? '#6b7280' : firedFirst ? '#f87171' : firedAny ? '#fb923c' : '#4ade80'
         const pd  = pctPos(t2, minP, maxP)
         const p1  = pctPos(t1, minP, maxP)
         const thumbPct = pctPos(isUnset ? snapTick((minP+maxP)/2) : chosen!, minP, maxP)
@@ -1003,11 +1003,13 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
               {isUnset ? <span className="text-xs text-gray-600">未設定</span> : (
                 <span className={`text-xs font-bold px-2 py-0.5 rounded-full border
                   ${firedFirst ? 'bg-red-900/50 text-red-300 border-red-700'
-                  : fired11   ? 'bg-orange-900/50 text-orange-300 border-orange-700'
+                  : firedAny  ? 'bg-orange-900/50 text-orange-300 border-orange-700'
                   :              'bg-green-900/50 text-green-300 border-green-700'}`}>
                   {firedFirst
                     ? (rs.some(r => r.id === '1①' && r.fired) ? '🔴 款一①' : '🔴 款一②')
-                    : fired11 ? '🟠 款十一' : '🟢 無注意'}
+                    : firedAny
+                    ? `🟠 注意(款${rs.filter(r => r.fired).map(r => r.id).join('/')})`
+                    : '🟢 無注意'}
                 </span>
               )}
               {isTriggered && <span className="text-xs text-red-400 font-bold">⚠️ 觸發</span>}
