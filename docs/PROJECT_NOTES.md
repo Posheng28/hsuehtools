@@ -25,14 +25,16 @@
 | **款一①**（純價格） | 超過 **32%** | 超過 **30%** | 光靠價格成立 |
 | **款一②**（價格+價差） | 超過 **25%** 且起迄價差 ≥ **50 元** | 超過 **23%** 且起迄價差 ≥ **40 元** | 漲幅門檻較低，但需同時達價差 |
 
-- 「起迄價差」= 計算日收盤 − 基準日收盤（6 天首尾差，**非單日**）。
+- 「起迄價差」= 計算日收盤 − **6 日窗口第一天收盤**（`closePath[1]`，即基準日後第一個交易日；**非 `closePath[0]` 基準日本身**）。
+- 個股**已知累積漲幅 = 逐日漲跌%「2 位無條件捨去（向零）」相加**（非連乘）：`knownSum = Σ trunc2((close[i]/close[i-1]−1)×100)`。
+- 門檻價 = `最近收盤 × (1 + (max(價格門檻%, 全體均值+20) − knownSum) / 100)` 取 `nextTick`（嚴格超過）；款一② 同時取 `max(nextTick(...), clTick(spreadBase+gap))`。
 - 款一①② **都屬第一款**，都計入「連 3 日 → 處置」。
-- `MARKET_PCT`：TWSE `{p1:1.32, p2:1.25, gap:50}`、TPEx `{p1:1.30, p2:1.23, gap:40}`。
+- `MARKET_PCT`（百分比）：TWSE `{p1:32, p2:25, p3:25, gap:50}`、TPEx `{p1:30, p2:23, p3:27, gap:40}`。
 
 #### 差幅 ≥ 20% 條件（已部分實作，2026/05）
 法規款一①② **逐字**：漲幅與**全體 _及_ 同類**差幅**_均_ ≥ 20%**（AND）。
 - **全體差幅已納入**：用 `/api/market-avg` 取全體累積漲幅 `mAvgPct`，門檻改為 `max(價格門檻, mAvgPct+20%)`。
-  - `thresh(bp, mkt, mAvgPct)` / `nLvl(..., mAvgPct)`：`diffMul = 1+(mAvgPct+20)/100`；`t1=nextTick(bp×max(p1,diffMul))`、`t2=max(nextTick(bp×max(p2,diffMul)), clTick(bp+gap))`。
+  - `thresh(prevClose, mkt, knownSum, mAvgPct, spreadBase)`：`diffPct = mAvgPct+20`；`t1=nextTick(prevClose×(1+(max(p1,diffPct)−knownSum)/100))`、`t2=max(nextTick(prevClose×(1+(max(p2,diffPct)−knownSum)/100)), clTick(spreadBase+gap))`。
   - 市場平靜時門檻 = 價格門檻（不變）；大盤一熱，差幅門檻 > 價格門檻 → 注意門檻自動升。
   - `mAvgPct=null`（未載入/取不到）→ 退回純價格門檻。貫穿卡片/表格/滑桿判色/處置模擬（`computeTriggers`）。
 - **上市/上櫃分開**：上市股比上市全體、上櫃股比上櫃全體。`mAvgPct = marketAvg[market]`，三者綁同一 `market`。
@@ -105,17 +107,15 @@
 | `notices/route.ts` | 注意紀錄 | TWSE `rwd/zh/announcement/notice`；TPEx `www/zh-tw/bulletin/attention`（直接回 JSON `tables[0].data`） |
 | `disposal/route.ts` | 單股處置 | **TWSE 是 `announcement/punish`**（不是 disposal！）；**TPEx 是 `bulletin/disposal`**（不是 disposition！） |
 | `disposal-list/route.ts` | 全市場處置清單 | 同上兩個 URL，不帶 code |
-| `market-avg/route.ts` | 全體有價證券「已知 5 間隔累積漲幅%」簡單平均（款一差幅基底） | 見下方專段 |
+| `market-avg/route.ts` | 官方加權指數逐日漲跌%相加（上市 TAIEX、上櫃櫃買指數），款一差幅 ≥ 20% 基底 | 見下方專段 |
 
 ### `market-avg` — 全體累積漲幅（差幅 ≥ 20% 用）
-- **資料源（皆可帶日期回補歷史）**：
-  - 上市：`twse.com.tw/exchangeReport/MI_INDEX?response=json&date=YYYYMMDD&type=ALLBUT0999` → 表 title 含「每日收盤行情」，`row[0]`=代號、`row[8]`=收盤、`row[9]`=漲跌(+/-)(`green`=跌)、`row[10]`=漲跌價差(幅度)。
-  - 上櫃：`tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=YYYY/MM/DD&type=EW&response=json` → `tables[0]`，`row[0]`=代號、`row[2]`=收盤、`row[3]`=漲跌(含正負號)。
-  - 只取普通股 `/^[1-9]\d{3}$/`（排除 00xx ETF、6 位數 ETN、特別股 2887B）。
-- **演算法**：抓最近 **6** 個已收盤交易日（含基準日；非交易日資料源回空 → 跳過避假日）→ 存每檔「當日漲跌幅%」→ **逐檔連乘 5 個間隔 `∏(1+漲跌幅)−1`**（= `close(最近)/close(基準)−1`，與法規價格比值一致）→ 對「整段都有交易」的股票取**簡單算術平均**（非市值加權；官方無此指數，需自算）。
-- **⚠️ 相加 ≠ 連乘**：每日漲跌幅**相加**少算複利交叉項；大漲股 6 天差可達 1~3%，**務必連乘**。已用真實資料對拍「收盤比值」驗證（差 ~0.016pp，純納入檔數差+tick 四捨五入）。
-- **儲存** `lib/marketStore.ts`：每日每市場 `{code:漲跌幅%}` 快照。本機寫 `.marketdata/`（gitignore），雲端唯讀 FS 自動退回純記憶體。`pruneExcept()` 只留當前窗口的交易日（規矩：滾動保留，週一更新即丟最舊）。
-- 回傳 `{ knownIntervals:5, baseDate, lastClosedDate, days, twse:{avg,count}, tpex:{avg,count} }`；結果快取 6h（key=lastClosedDate），`bust=1` 清。
+- **全體均值 = 官方發行量加權指數的「逐日漲跌%相加（全精度）」**：上市用 TAIEX（發行量加權股價指數）、上櫃用櫃買指數。**不逐檔抓全市場股價、不是等權平均、不是連乘。**
+- **資料源**：
+  - 上市：`twse.com.tw/indicesReport/MI_5MINS_HIST?response=json&date=YYYYMMDD`（ROC 日期；回整月資料；`row[4]`=收盤指數）。
+  - 上櫃：`tpex.org.tw/openapi/v1/tpex_index`（欄位 `{Date:YYYYMMDD, Close}`；回近一個月）。
+- **演算法**：窗口由 `?date=`（個股最近收盤日）決定，取 ≤ 該日最近 **6** 交易日（**5** 個間隔）→ 對每個間隔計算 `(close[i]/close[i-1]−1)×100`（全精度）→ **逐日相加**（非連乘），得到 `avg`（百分比，保留全精度）。
+- 回傳 `{ knownIntervals, baseDate, lastClosedDate, twse:{avg}, tpex:{avg} }`；`avg` 取不到為 `null`（個股端退回純價格門檻）。結果快取 6h（key=lastClosedDate），`bust=1` 清。
 
 ### 處置 API 欄位對應（重要）
 - **TWSE punish**：`row[2]`=代號、`row[3]`=名稱、`row[6]`=處置起迄時間（斜線格式 `115/05/08～115/05/21`）
@@ -161,7 +161,6 @@ app/api/
   chips-rank/                 全市場大戶/內部大戶排行（opendata + legalStore）
   chips-crawl/                背景漸進爬 DJ 三大法人（種子/維護/去重）
 lib/cache.ts                  記憶體快取（getCached/setCached/deleteCachePrefix）
-lib/marketStore.ts            全市場每日漲跌幅快照（留 6 交易日）
 lib/chipsStore.ts             單股 TDCC 級距週資料（per-ticker）
 lib/rankStore.ts              全市場大戶佔比每週快照（opendata）
 lib/legalStore.ts             全市場三大法人持股 per-stock 週資料（DJ，留 52 週）+ 爬取進度
