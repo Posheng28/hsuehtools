@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import type { FundDef } from '@/lib/fund/types'
 
 interface Holding {
   code: string
@@ -18,12 +19,6 @@ interface Snapshot {
   fetchedAt: string
   holdings: Holding[]
   meta?: { aum?: number; manager?: string; cashPct?: number; note?: string }
-}
-
-interface FundDef {
-  fundId: string
-  kind: string
-  company: string
 }
 
 export default function FundView() {
@@ -45,11 +40,15 @@ export default function FundView() {
 
   useEffect(() => {
     if (!sel) return
+    const ac = new AbortController()
+    setSnap(null)          // I-fix: clear stale table while switching
     setLoading(true)
-    fetch(`/api/fund?fund=${sel}`)
+    fetch(`/api/fund?fund=${sel}`, { signal: ac.signal })
       .then(r => r.json())
       .then(d => setSnap(d.monthly ?? d.quarterly ?? null))
-      .finally(() => setLoading(false))
+      .catch(e => { if (e.name !== 'AbortError') setSnap(null) })
+      .finally(() => { if (!ac.signal.aborted) setLoading(false) })
+    return () => ac.abort()
   }, [sel])
 
   return (
