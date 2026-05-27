@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { evalClauses, summarize, gap11, type ClauseResult } from '@/lib/clauseEngine'
 
 /* ── Types ─────────────────────────────────────────────────────────────────── */
 interface DayEntry   { baseDateStr: string; bp: number }
@@ -21,7 +22,7 @@ interface Props { sidebarOpen: boolean; onCloseSidebar: () => void }
 /* ── Constants ─────────────────────────────────────────────────────────────── */
 const OFFSET = 6
 // 每日漲跌% 取小數 2 位「無條件捨去(向零)」— 注意股累積漲幅的官方逐日進位法（與看盤工具一致）
-const trunc2 = (x: number) => Math.trunc(x * 100) / 100
+const trunc2 = (x: number) => { const v = Math.round(x * 1e8) / 1e8; return Math.trunc(v * 100) / 100 }
 
 /* ── 台股 tick（最小升降單位，依股價級距）─────────────────────────────────────── */
 // <10:0.01　10~<50:0.05　50~<100:0.1　100~<500:0.5　500~<1000:1　≥1000:5
@@ -210,7 +211,7 @@ function defaultDays(): DayEntry[] {
  * baseReset: 最近一次處置生效日（30交易日內），若有則從此日起算，不追溯之前
  */
 function computeTriggers(
-  notices: (0|1|2|3)[],
+  notices: { first: boolean; any: boolean }[],
   days: DayEntry[],
   pastNotices: PastNotice[],
   baseReset?: string,
@@ -238,15 +239,12 @@ function computeTriggers(
     }
   }
 
-  const all = [...prior, ...notices]; const pL = prior.length
+  const all = [...prior.map(l => ({ first: l === 1, any: l >= 1 })), ...notices]
+  const pL = prior.length
   let c1 = 0, ca = 0, t1 = -1, t2 = -1
   for (let i = 0; i < all.length; i++) {
-    const n = all[i]
-    const isPast = i < pL
-    // 第一款？模擬日的 level1/2 = 款一(①/②) 才算第一款；level3 = 款三(第三款) 不算。
-    //          歷史注意只有 level1 才是第一款，level2 代表款二～款八，不計入規則①
-    const isFirst = isPast ? (n === 1) : (n === 1 || n === 2)
-    const isAny   = n >= 1   // 任意注意（款一～款八，含款三）
+    const isFirst = all[i].first
+    const isAny   = all[i].any
     c1 = isFirst ? c1 + 1 : 0
     ca = isAny   ? ca + 1 : 0
     const si = i - pL
@@ -254,15 +252,15 @@ function computeTriggers(
   }
 
   // 10日 / 30日 視窗
-  const nm = new Map<string, 0|1|2|3>(filtPN.map(p => [p.dateStr, p.level as 0|1|2]))
+  const nm = new Map<string, boolean>(filtPN.map(p => [p.dateStr, true]))
   let t3 = -1, t4 = -1, lc10 = 0, lc30 = 0
   for (let i = 0; i < N; i++) {
-    nm.set(calcISO(days[i]), notices[i])
+    if (notices[i].any) nm.set(calcISO(days[i]), true)
     const lat = calcISO(days[i])
     const c10 = tdBetween(subTD(lat, 9), lat)
-      .filter(d => (!baseReset || d >= baseReset) && (nm.get(d)??0) > 0).length
+      .filter(d => (!baseReset || d >= baseReset) && nm.get(d) === true).length
     const c30 = tdBetween(subTD(lat, 29), lat)
-      .filter(d => (!baseReset || d >= baseReset) && (nm.get(d)??0) > 0).length
+      .filter(d => (!baseReset || d >= baseReset) && nm.get(d) === true).length
     lc10 = c10; lc30 = c30
     if (t3<0 && c10>=6)  t3 = i
     if (t4<0 && c30>=12) t4 = i
@@ -385,6 +383,14 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   const [avg60Vol,     setAvg60Vol]     = useState<number | null>(null)
   const [clause3VolMet, setClause3VolMet] = useState(false)
 
+  // 款六：PE/PBR 資料
+  const [peData, setPeData] = useState<{ pe:number|null; pbr:number|null; mktPe:number|null; mktPbr:number|null }|null>(null)
+  const [clause6Assume, setClause6Assume] = useState(false)
+
+  // 款十二：借券資料
+  const [sblData, setSblData] = useState<{ rate:number|null; amp:number|null }|null>(null)
+  const [clause12Assume, setClause12Assume] = useState(false)
+
   const [queryCode,    setQueryCode]    = useState('')
   const [importStatus, setImportStatus] = useState<ImportStatus>({ loading: false })
 
@@ -445,6 +451,14 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           setDays(newDays)
           setSimPrices(newDays.map(() => null))
           stockOk = true
+          // 款六：抓 PE/PBR
+          fetch(`/api/peratio?market=${json.market}&code=${code}&date=${todayTD.replace(/-/g,'')}`).then(r=>r.json()).then(setPeData).catch(()=>setPeData(null))
+          // 款十二：借券率/放大
+          {
+            const winYMDs = all.slice(-6).map(d => d.date.replace(/-/g,''))
+            const ampYMDs = all.slice(-20).map(d => d.date.replace(/-/g,''))
+            fetch(`/api/sbl?market=${json.market}&code=${code}&win=${winYMDs.join(',')}&amp=${ampYMDs.join(',')}`).then(r=>r.json()).then(setSblData).catch(()=>setSblData(null))
+          }
         }
       }
       if (!stockOk) {
@@ -531,6 +545,14 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           const recent = all.slice(-6)
           const newDays: DayEntry[] = recent.map(d => ({ baseDateStr: d.date, bp: Math.round(d.value * 10) / 10 }))
           setDays(newDays); setSimPrices(newDays.map(() => null)); stockOk = true
+          // 款六：抓 PE/PBR
+          fetch(`/api/peratio?market=${json.market}&code=${code}&date=${todayTD.replace(/-/g,'')}`).then(r=>r.json()).then(setPeData).catch(()=>setPeData(null))
+          // 款十二：借券率/放大
+          {
+            const winYMDs = all.slice(-6).map(d => d.date.replace(/-/g,''))
+            const ampYMDs = all.slice(-20).map(d => d.date.replace(/-/g,''))
+            fetch(`/api/sbl?market=${json.market}&code=${code}&win=${winYMDs.join(',')}&amp=${ampYMDs.join(',')}`).then(r=>r.json()).then(setSblData).catch(()=>setSblData(null))
+          }
         }
       }
       if (!stockOk) { setImportStatus({ loading: false, error: `找不到「${code}」的股價資料` }); return }
@@ -682,16 +704,36 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   // 第二款（以實際匯入歷史股價判斷，含防重複豁免）
   const clause2 = checkClause2(priceHistory, pastNotices, market)
 
+  // 款二橋接：把既有 checkClause2 結果轉成引擎輸入
+  const clause2ForEngine = () =>
+    clause2.triggered ? { window: clause2.window!, pct: clause2.pct!, exempt: clause2.exempt } : null
+
+  // 款六：PE/PBR 依預測股價等比例縮放（最近收盤的 PE/PBR × 預測價/最近收盤）
+  const lastClose = priceHistory.at(-1)?.value ?? startPrice
+  const pePredict  = (price: number) => peData?.pe  != null && lastClose > 0 ? peData.pe  * price / lastClose : null
+  const pbrPredict = (price: number) => peData?.pbr != null && lastClose > 0 ? peData.pbr * price / lastClose : null
+
+  // 組裝單卡引擎輸入並評估
+  const evalCard = (i: number, price: number): ClauseResult[] => evalClauses({
+    market, prevClose: prevCloseOf(i), sumKnown: knownSumOf(i), price,
+    spreadBase: spreadBaseOf(i),
+    marketAvg6: mAvgPct,
+    c2: i === 0 ? clause2ForEngine() : null,
+    volMet: i === 0 && clause3VolMet,
+    pe: i === 0 ? pePredict(price) : null, pbr: i === 0 ? pbrPredict(price) : null, mktPe: peData?.mktPe ?? null, mktPbr: peData?.mktPbr ?? null, c6Assume: i === 0 && clause6Assume,
+    sblRate: i === 0 ? (sblData?.rate ?? null) : null, sblAmp: i === 0 ? (sblData?.amp ?? null) : null, c12Assume: i === 0 && clause12Assume,
+  })
+
   // 處置生效日是否在最近30個交易日內？（以最近交易日為基準）
   const tdCutoff30 = subTD(todayTD, 29)
   const baseReset: string | undefined =
     lastDisposalDate && lastDisposalDate >= tdCutoff30 ? lastDisposalDate : undefined
 
   // 模擬注意序列
-  const notices: (0|1|2|3)[] = []
+  const notices: { first: boolean; any: boolean }[] = []
   for (let i = 0; i < days.length; i++) {
     if (simPrices[i] === null) break
-    notices.push(nLvl(simPrices[i]!, days[i].bp, prevCloseOf(i), knownSumOf(i), spreadBaseOf(i), market, mAvgPct, i === 0 && clause3VolMet))
+    notices.push(summarize(evalCard(i, simPrices[i]!)))
   }
 
   // 模擬是否觸發處置（以 baseReset 為起算）— 用於下方「此路徑安全/觸發」結果列
@@ -918,7 +960,9 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
         const prevUnset       = i > 0 && simPrices[i-1] === null
         const isUnset         = chosen === null
         const dispPrice       = isUnset ? (i === 0 ? startPrice : (simPrices[i-1] ?? startPrice)) : chosen
-        const nl              = isUnset ? null : nLvl(chosen, d.bp, prevClose0, sumKnown, spreadBaseOf(i), market, mAvgPct, i === 0 && clause3VolMet)
+        const rs              = isUnset ? [] : evalCard(i, chosen!)
+        const firedFirst      = rs.some(r => (r.id === '1①' || r.id === '1②') && r.fired)
+        const firedAny        = rs.some(r => r.fired)
         // 累積漲幅(逐日相加) = 已知 5 間隔相加 + 計算日當日漲跌%（同樣逐日 2 位無條件捨去）
         const pctChg          = (sumKnown + (prevClose0 > 0 ? trunc2((dispPrice - prevClose0) / prevClose0 * 100) : 0)).toFixed(2)
         // 日內漲幅 = 對比昨日收盤（即前一張卡的價格）
@@ -930,11 +974,11 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
         const isTriggered     = simResult?.disposed && simResult.trigIdx === i
 
         const borderCls = isTriggered ? 'border-red-600 bg-red-950/30'
-          : isUnset            ? 'border-gray-700 opacity-70'
-          : (nl === 1 || nl === 2) ? 'border-red-500 bg-red-950/20'   // 款一①② 皆紅（第一款）
-          : nl === 3           ? 'border-orange-500 bg-orange-950/20' // 款三（第三款，價量異常）
-          :                      'border-green-600 bg-green-950/10'
-        const col = isUnset ? '#6b7280' : (nl===1 || nl===2) ? '#f87171' : nl===3 ? '#fb923c' : '#4ade80'
+          : isUnset      ? 'border-gray-700 opacity-70'
+          : firedFirst   ? 'border-red-500 bg-red-950/20'      // 款一①② 皆紅（第一款）
+          : firedAny     ? 'border-orange-500 bg-orange-950/20' // 其他注意款（款二/三/六/十一/十二…）
+          :                'border-green-600 bg-green-950/10'
+        const col = isUnset ? '#6b7280' : firedFirst ? '#f87171' : firedAny ? '#fb923c' : '#4ade80'
         const pd  = pctPos(t2, minP, maxP)
         const p1  = pctPos(t1, minP, maxP)
         const thumbPct = pctPos(isUnset ? snapTick((minP+maxP)/2) : chosen!, minP, maxP)
@@ -955,6 +999,16 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                 className="text-xs px-1.5 py-0.5 rounded bg-yellow-950/60 text-yellow-500 border border-yellow-800/60">
                 款二解豁≥{fNum(clause2NoExemptPrice(d.bp, market))}
               </span>
+              {(() => {
+                const g11 = gap11(market, dispPrice)
+                const t11 = clTick(spreadBaseOf(i)) + g11
+                return (
+                  <span title={`起迄價差≥${g11}元(收盤≥${market === 'TPEx' ? 300 : 500}每+${market === 'TPEx' ? 15 : 25}加級距) → 收盤約≥${fNum(t11)}`}
+                    className="text-xs px-1.5 py-0.5 rounded bg-orange-950/60 text-orange-400 border border-orange-800/60">
+                    款十一 價差≥{g11}
+                  </span>
+                )
+              })()}
             </div>
 
             <div className="flex items-baseline gap-1.5">
@@ -983,10 +1037,14 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
             <div className="min-h-[22px] flex items-center gap-1.5 flex-wrap">
               {isUnset ? <span className="text-xs text-gray-600">未設定</span> : (
                 <span className={`text-xs font-bold px-2 py-0.5 rounded-full border
-                  ${(nl===1 || nl===2) ? 'bg-red-900/50 text-red-300 border-red-700'
-                  : nl===3   ? 'bg-orange-900/50 text-orange-300 border-orange-700'
-                  :            'bg-green-900/50 text-green-300 border-green-700'}`}>
-                  {nl===1 ? '🔴 款一①' : nl===2 ? '🔴 款一②' : nl===3 ? '🟠 款三' : '🟢 無注意'}
+                  ${firedFirst ? 'bg-red-900/50 text-red-300 border-red-700'
+                  : firedAny  ? 'bg-orange-900/50 text-orange-300 border-orange-700'
+                  :              'bg-green-900/50 text-green-300 border-green-700'}`}>
+                  {firedFirst
+                    ? (rs.some(r => r.id === '1①' && r.fired) ? '🔴 款一①' : '🔴 款一②')
+                    : firedAny
+                    ? `🟠 注意(款${rs.filter(r => r.fired).map(r => r.id).join('/')})`
+                    : '🟢 無注意'}
                 </span>
               )}
               {isTriggered && <span className="text-xs text-red-400 font-bold">⚠️ 觸發</span>}
@@ -1058,9 +1116,64 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
               {clause3VolMet ? '☑ 假設當日量達標（已計入處置模擬）' : '☐ 假設當日量達標'}
             </button>
           )}
+          {/* 款六 — PE/PBR */}
+          {(() => {
+            const c6 = evalCard(0, simPrices[0] ?? startPrice).find(r => r.id === '6')
+            if (!c6) return null
+            const priceHit = c6.fired || c6.blocked
+            return (
+              <div className={`flex flex-col gap-1.5 border-t border-gray-800 pt-2 ${priceHit ? 'text-orange-300' : 'text-gray-500'}`}>
+                <div>
+                  {priceHit ? '✔' : '○'} <b className="text-base">款六（本益比/股淨比）</b>　{c6.detail}
+                </div>
+                {c6.blocked && (
+                  <button
+                    onClick={() => setClause6Assume(v => !v)}
+                    className={`self-start text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+                      clause6Assume ? 'bg-orange-900/50 text-orange-200 border-orange-600'
+                                    : 'bg-gray-800 text-gray-300 border-gray-700 hover:border-gray-500'}`}>
+                    {clause6Assume ? '☑ 假設當日週轉率/券商集中達標（已計入處置模擬）' : '☐ 假設當日週轉率/券商集中達標'}
+                  </button>
+                )}
+                {c6.fired && (
+                  <span className="text-xs text-orange-400">（已勾選假設條件，計入處置模擬）</span>
+                )}
+              </div>
+            )
+          })()}
+          {/* 款十二 — 借券 */}
+          {(() => {
+            const c12 = evalCard(0, simPrices[0] ?? startPrice).find(r => r.id === '12')
+            if (!c12) return null
+            const priceHit = c12.fired || c12.blocked
+            return (
+              <div className={`flex flex-col gap-1.5 border-t border-gray-800 pt-2 ${priceHit ? 'text-orange-300' : 'text-gray-500'}`}>
+                <div>
+                  {priceHit ? '✔' : '○'} <b className="text-base">款十二（借券賣出異常）</b>　{c12.detail}
+                </div>
+                {c12.blocked && (
+                  <button
+                    onClick={() => setClause12Assume(v => !v)}
+                    className={`self-start text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+                      clause12Assume ? 'bg-orange-900/50 text-orange-200 border-orange-600'
+                                     : 'bg-gray-800 text-gray-300 border-gray-700 hover:border-gray-500'}`}>
+                    {clause12Assume ? '☑ 假設當日借券達標（已計入處置模擬）' : '☐ 假設當日借券達標'}
+                  </button>
+                )}
+                {c12.fired && (
+                  <span className="text-xs text-orange-400">（已勾選假設條件，計入處置模擬）</span>
+                )}
+              </div>
+            )
+          })()}
+          {/* 款四、五 — 無公開 API */}
+          <div className="text-xs text-gray-500 border-t border-gray-800 pt-2 space-y-1">
+            <div>○ <b>款四（週轉率）</b>　需流通在外股數（無公開批量 API）→ 無法自動判定</div>
+            <div>○ <b>款五（單一券商買賣占比）</b>　券商分點全量無公開 API → 無法自動判定</div>
+          </div>
           {/* 待接 / 無資料 */}
           <div className="text-sm text-gray-500 border-t border-gray-800 pt-2">
-            ⏳ 待接 / 無資料：款四 週轉率&gt;10% ・ 款五 券商受託占比&gt;25% ・ 款六 本益比/股淨比 ・ 款七 券資比≥4倍
+            ⏳ 待接：款七 券資比≥4倍
           </div>
         </div>
       </div>

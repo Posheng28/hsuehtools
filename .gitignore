@@ -54,3 +54,4 @@ next-env.d.ts
 
 # orphaned MI_QFIIS cache (fundStore removed)
 /.funddata/
+Usersuser*.json
