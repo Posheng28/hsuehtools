@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { evalClauses, summarize, type ClauseResult } from '@/lib/clauseEngine'
+import { evalClauses, summarize, gap11, type ClauseResult } from '@/lib/clauseEngine'
 
 /* ── Types ─────────────────────────────────────────────────────────────────── */
 interface DayEntry   { baseDateStr: string; bp: number }
@@ -974,6 +974,16 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                 className="text-xs px-1.5 py-0.5 rounded bg-yellow-950/60 text-yellow-500 border border-yellow-800/60">
                 款二解豁≥{fNum(clause2NoExemptPrice(d.bp, market))}
               </span>
+              {(() => {
+                const g11 = gap11(market, dispPrice)
+                const t11 = clTick(windowMinOf(i)) + g11
+                return (
+                  <span title={`起迄價差≥${g11}元(收盤≥${market === 'TPEx' ? 300 : 500}每+${market === 'TPEx' ? 15 : 25}加級距) → 收盤約≥${fNum(t11)}`}
+                    className="text-xs px-1.5 py-0.5 rounded bg-orange-950/60 text-orange-400 border border-orange-800/60">
+                    款十一 價差≥{g11}
+                  </span>
+                )
+              })()}
             </div>
 
             <div className="flex items-baseline gap-1.5">
