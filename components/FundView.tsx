@@ -93,9 +93,10 @@ const STRATEGY_NAMES: Record<string, string> = {
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
 
+// Backtest values are stored already as percentages (e.g. 63.54 = 63.54%), not fractions.
 function fmtPct(v: number | null | undefined): string {
   if (v == null || isNaN(v)) return '–'
-  return (v * 100).toFixed(2) + '%'
+  return v.toFixed(2) + '%'
 }
 
 function fmtNum(v: number | null | undefined, decimals = 2): string {
