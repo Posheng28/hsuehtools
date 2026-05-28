@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest'
+import { promises as fs } from 'fs'
+import path from 'path'
 import { parseNomuraEtf } from '../parse/nomuraEtf'
 import { parseCapitalEtf } from '../parse/capitalEtf'
 import { parseAllianzEtf } from '../parse/allianzEtf'
+import { parseCmoneyNuxt, extractNuxtHoldings } from '../parse/cmoneyNuxt'
+import { parseCmoneyEtf } from '../parse/cmoneyEtf'
 import nomura from './fixtures/nomura-00980A.json'
 import capital from './fixtures/capital-00982A.json'
 import allianz from './fixtures/allianz-00993A.json'
@@ -51,5 +55,73 @@ describe('parseAllianzEtf (real fixture 00993A)', () => {
     const r = s.holdings[0]
     expect(r.code).toBe('2330')
     expect(r.weightPct).toBe(9.08)
+  })
+})
+
+describe('parseCmoneyNuxt (real fixtures)', () => {
+  it('00981A: 10 holdings, top row 2330 weight 9.23', async () => {
+    const html = await fs.readFile(path.join(__dirname, 'fixtures/cmoney-00981A.html'), 'latin1')
+    const snap = parseCmoneyNuxt(html, '00981A', '2026-05-28')
+    expect(snap.fundId).toBe('00981A')
+    expect(snap.reportType).toBe('etf_daily')
+    expect(snap.source).toBe('cmoney-nuxt')
+    expect(snap.period).toBe('2026-05-28')
+    expect(snap.holdings.length).toBe(10)
+    expect(snap.holdings[0].code).toBe('2330')
+    expect(snap.holdings[0].weightPct).toBe(9.23)
+    expect(snap.holdings[0].rank).toBe(1)
+  })
+
+  it('00991A: 10 holdings, top row 2330 weight 15.86', async () => {
+    const html = await fs.readFile(path.join(__dirname, 'fixtures/cmoney-00991A.html'), 'latin1')
+    const snap = parseCmoneyNuxt(html, '00991A', '2026-05-28')
+    expect(snap.fundId).toBe('00991A')
+    expect(snap.reportType).toBe('etf_daily')
+    expect(snap.source).toBe('cmoney-nuxt')
+    expect(snap.period).toBe('2026-05-28')
+    expect(snap.holdings.length).toBe(10)
+    expect(snap.holdings[0].code).toBe('2330')
+    expect(snap.holdings[0].weightPct).toBe(15.86)
+    expect(snap.holdings[0].rank).toBe(1)
+  })
+
+  it('extracted holdings have numeric weights summing in (40..100)% range', async () => {
+    const html = await fs.readFile(path.join(__dirname, 'fixtures/cmoney-00981A.html'), 'latin1')
+    const rows = extractNuxtHoldings(html)
+    const sum = rows.reduce((a, r) => a + r.weightPct, 0)
+    expect(sum).toBeGreaterThan(40)
+    expect(sum).toBeLessThan(100)
+  })
+})
+
+describe('parseCmoneyEtf (real fixtures)', () => {
+  it('00981A: filters out cash rows, real holdings', async () => {
+    const raw = JSON.parse(await fs.readFile(path.join(__dirname, 'fixtures/cmoney-holdings-00981A.json'), 'utf-8'))
+    const snap = parseCmoneyEtf(raw, '00981A')
+    expect(snap.fundId).toBe('00981A')
+    expect(snap.reportType).toBe('etf_daily')
+    expect(snap.source).toBe('cmoney-jsoncsv')
+    // 55 total rows - 4 non-stock (C_NTD, M_NTD, PFUR_NTD, RDI_NTD) = 51 stock rows
+    expect(snap.period).toBe('2026-05-27')
+    expect(snap.holdings.length).toBe(51)
+    expect(snap.holdings[0].code).toBe('2330')
+    expect(snap.holdings[0].weightPct).toBe(9.23)
+    // No cash rows leaked through
+    expect(snap.holdings.find(h => h.code.includes('_'))).toBeUndefined()
+  })
+
+  it('00991A: same shape', async () => {
+    const raw = JSON.parse(await fs.readFile(path.join(__dirname, 'fixtures/cmoney-holdings-00991A.json'), 'utf-8'))
+    const snap = parseCmoneyEtf(raw, '00991A')
+    expect(snap.fundId).toBe('00991A')
+    expect(snap.reportType).toBe('etf_daily')
+    expect(snap.source).toBe('cmoney-jsoncsv')
+    // 52 total rows - 2 non-stock (DA_NTD, PB_NTD) = 50 stock rows
+    expect(snap.period).toBe('2026-05-27')
+    expect(snap.holdings.length).toBe(50)
+    expect(snap.holdings[0].code).toBe('2330')
+    expect(snap.holdings[0].weightPct).toBe(15.86)
+    // No cash rows leaked through
+    expect(snap.holdings.find(h => h.code.includes('_'))).toBeUndefined()
   })
 })
