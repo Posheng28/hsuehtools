@@ -24,3 +24,18 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ── 訊號台 fund terminal identity tokens ─────────────────────────────── */
+.fund-term {
+  --bg: #0e1116;
+  --panel: #161a22;
+  --panel2: #1c2230;
+  --line: rgba(255, 255, 255, 0.07);
+  --accent: #35c9d6;
+  --accent-dim: rgba(53, 201, 214, 0.14);
+  --txt: #d7dbe3;
+  --txt-dim: #8b93a1;
+  --txt-mute: #5f6775;
+  --up: #ff5d6c;
+  --down: #34d399;
+}
