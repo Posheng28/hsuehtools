@@ -42,7 +42,7 @@ export const ETFS: FundDef[] = [
   { fundId: '00982A', kind: 'etf', company: 'capital', etfTicker: '00982A', crawl: 'capital-api', capitalInternalId: '399' },
   { fundId: '00988A', kind: 'etf', company: 'uni',     etfTicker: '00988A', crawl: 'uni-stealth' },
   { fundId: '00991A', kind: 'etf', company: 'fuhua',   etfTicker: '00991A', crawl: 'fuhua-excel' },
-  { fundId: '00993A', kind: 'etf', company: 'allianz', etfTicker: '00993A', crawl: 'allianz' },
+  { fundId: '00993A', kind: 'etf', company: 'allianz', etfTicker: '00993A', crawl: 'allianz', allianzInternalId: 'E0002' },
 ]
 
 export const ALL_DEFS: FundDef[] = [...FUNDS, ...ETFS]

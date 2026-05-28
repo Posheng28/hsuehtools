@@ -4,6 +4,7 @@ import { isAfterCutoff } from '@/lib/fund/timegate'
 import { saveSnapshot } from '@/lib/fund/store'
 import { parseNomuraEtf } from '@/lib/fund/parse/nomuraEtf'
 import { parseCapitalEtf } from '@/lib/fund/parse/capitalEtf'
+import { parseAllianzEtf } from '@/lib/fund/parse/allianzEtf'
 
 export async function POST(req: NextRequest) {
   const { fundId, force } = await req.json().catch(() => ({} as { fundId?: string; force?: boolean }))
@@ -57,9 +58,61 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, period: snap.period, holdings: snap.holdings.length })
     }
 
+    case 'allianz': {
+      if (!def.allianzInternalId) {
+        return NextResponse.json({ error: 'allianzInternalId missing' }, { status: 500 })
+      }
+      const referer = `https://etf.allianzgi.com.tw/etf-info/${def.allianzInternalId}?tab=4`
+      const origin = 'https://etf.allianzgi.com.tw'
+      // Step 1: get antiforgery token
+      const tokRes = await fetch('https://etf.allianzgi.com.tw/webapi/api/AntiForgery/GetAntiForgeryToken', {
+        headers: {
+          'Accept': 'application/json, text/plain, */*',
+          'Origin': origin,
+          'Referer': referer,
+        },
+      })
+      if (!tokRes.ok) {
+        return NextResponse.json({ error: `allianz token HTTP ${tokRes.status}` }, { status: 502 })
+      }
+      const tokJson = await tokRes.json() as { token?: string }
+      const token = tokJson.token
+      if (!token) {
+        return NextResponse.json({ error: 'allianz token missing in body' }, { status: 502 })
+      }
+      // Extract Set-Cookie headers for forwarding to step 2
+      const sc: string[] = (tokRes.headers as any).getSetCookie?.() ?? [tokRes.headers.get('set-cookie')].filter(Boolean) as string[]
+      const cookie = sc
+        .map((c: string) => c.split(';')[0])
+        .filter(Boolean)
+        .join('; ')
+      if (!cookie) {
+        return NextResponse.json({ error: 'allianz cookies missing' }, { status: 502 })
+      }
+      // Step 2: get fund holdings
+      const res = await fetch('https://etf.allianzgi.com.tw/webapi/api/Fund/GetFundAssets', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/plain, */*',
+          'Origin': origin,
+          'Referer': referer,
+          'X-XSRF-TOKEN': token,
+          'Cookie': cookie,
+        },
+        body: JSON.stringify({ FundID: def.allianzInternalId }),
+      })
+      if (!res.ok) {
+        return NextResponse.json({ error: `allianz assets HTTP ${res.status}` }, { status: 502 })
+      }
+      const raw = await res.json()
+      const snap = parseAllianzEtf(raw, def.fundId)
+      await saveSnapshot(snap)
+      return NextResponse.json({ ok: true, period: snap.period, holdings: snap.holdings.length })
+    }
+
     case 'fuhua-excel':
     case 'uni-stealth':
-    case 'allianz':
     case 'sitca':
     default:
       return NextResponse.json({ error: `crawl '${def.crawl}' 尚未實作` }, { status: 501 })

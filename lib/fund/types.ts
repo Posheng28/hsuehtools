@@ -31,4 +31,5 @@ export interface FundDef {
   relatedEtf?: string
   crawl: CrawlStrategy
   capitalInternalId?: string
+  allianzInternalId?: string
 }
