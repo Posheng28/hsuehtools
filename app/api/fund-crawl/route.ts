@@ -5,7 +5,6 @@ import { saveSnapshot } from '@/lib/fund/store'
 import { parseNomuraEtf } from '@/lib/fund/parse/nomuraEtf'
 import { parseCapitalEtf } from '@/lib/fund/parse/capitalEtf'
 import { parseAllianzEtf } from '@/lib/fund/parse/allianzEtf'
-import { parseCmoneyNuxt } from '@/lib/fund/parse/cmoneyNuxt'
 import { parseCmoneyEtf } from '@/lib/fund/parse/cmoneyEtf'
 
 export async function POST(req: NextRequest) {
@@ -109,25 +108,6 @@ export async function POST(req: NextRequest) {
       }
       const raw = await res.json()
       const snap = parseAllianzEtf(raw, def.fundId)
-      await saveSnapshot(snap)
-      return NextResponse.json({ ok: true, period: snap.period, holdings: snap.holdings.length })
-    }
-
-    case 'cmoney-nuxt': {
-      const url = `https://www.cmoney.tw/etf/tw/${def.etfTicker}`
-      const res = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0',
-          'Accept': 'text/html',
-          'Accept-Language': 'zh-TW',
-        },
-      })
-      if (!res.ok) return NextResponse.json({ error: `cmoney HTTP ${res.status}` }, { status: 502 })
-      const html = await res.text()
-      // Taiwan-today: UTC+8
-      const tst = new Date(Date.now() + 8 * 3600 * 1000)
-      const today = `${tst.getUTCFullYear()}-${String(tst.getUTCMonth() + 1).padStart(2, '0')}-${String(tst.getUTCDate()).padStart(2, '0')}`
-      const snap = parseCmoneyNuxt(html, def.fundId, today)
       await saveSnapshot(snap)
       return NextResponse.json({ ok: true, period: snap.period, holdings: snap.holdings.length })
     }
