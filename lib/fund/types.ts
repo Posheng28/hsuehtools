@@ -30,4 +30,5 @@ export interface FundDef {
   etfTicker?: string
   relatedEtf?: string
   crawl: CrawlStrategy
+  capitalInternalId?: string
 }
