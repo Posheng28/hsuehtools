@@ -1,7 +1,6 @@
 export type ReportType = 'monthly_top10' | 'quarterly_full' | 'etf_daily'
 export type FundKind = 'fund' | 'etf'
-export type CrawlStrategy =
-  | 'sitca' | 'nomura-api' | 'capital-api' | 'fuhua-excel' | 'uni-stealth' | 'allianz' | 'cmoney-jsoncsv' | 'none'
+export type CrawlStrategy = 'sitca' | 'moneydj' | 'none'
 
 export interface FundHolding {
   code: string
@@ -30,6 +29,4 @@ export interface FundDef {
   etfTicker?: string
   relatedEtf?: string
   crawl: CrawlStrategy
-  capitalInternalId?: string
-  allianzInternalId?: string
 }

@@ -37,12 +37,12 @@ export const FUNDS: FundDef[] = [
 ]
 
 export const ETFS: FundDef[] = [
-  { fundId: '00980A', kind: 'etf', company: 'nomura',  etfTicker: '00980A', crawl: 'nomura-api' },
-  { fundId: '00981A', kind: 'etf', company: 'uni',     etfTicker: '00981A', crawl: 'cmoney-jsoncsv' },
-  { fundId: '00982A', kind: 'etf', company: 'capital', etfTicker: '00982A', crawl: 'capital-api', capitalInternalId: '399' },
-  { fundId: '00988A', kind: 'etf', company: 'uni',     etfTicker: '00988A', crawl: 'uni-stealth' },
-  { fundId: '00991A', kind: 'etf', company: 'fuhua',   etfTicker: '00991A', crawl: 'cmoney-jsoncsv' },
-  { fundId: '00993A', kind: 'etf', company: 'allianz', etfTicker: '00993A', crawl: 'allianz', allianzInternalId: 'E0002' },
+  { fundId: '00980A', kind: 'etf', company: 'nomura',  etfTicker: '00980A', crawl: 'moneydj' },
+  { fundId: '00981A', kind: 'etf', company: 'uni',     etfTicker: '00981A', crawl: 'moneydj' },
+  { fundId: '00982A', kind: 'etf', company: 'capital', etfTicker: '00982A', crawl: 'moneydj' },
+  { fundId: '00988A', kind: 'etf', company: 'uni',     etfTicker: '00988A', crawl: 'moneydj' },
+  { fundId: '00991A', kind: 'etf', company: 'fuhua',   etfTicker: '00991A', crawl: 'moneydj' },
+  { fundId: '00993A', kind: 'etf', company: 'allianz', etfTicker: '00993A', crawl: 'moneydj' },
 ]
 
 export const ALL_DEFS: FundDef[] = [...FUNDS, ...ETFS]
