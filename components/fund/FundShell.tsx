@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import MovesView from './MovesView'
 import StrategiesView from './StrategiesView'
 import HoldingsView from './HoldingsView'
@@ -21,6 +21,8 @@ const NAV_ITEMS: NavItem[] = [
   { id: '05', index: '05', label: '經理人' },
   { id: '06', index: '06', label: '資金流' },
 ]
+
+const NARROW_BREAKPOINT = 720
 
 function PlaceholderCard({ label }: { label: string }) {
   return (
@@ -52,6 +54,25 @@ function PlaceholderCard({ label }: { label: string }) {
 
 export default function FundShell() {
   const [section, setSection] = useState<SectionId>('01')
+  const [narrow, setNarrow] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    // Use ResizeObserver on the fund root element so we react to the
+    // actual container width (not the full viewport, which may differ
+    // when a sidebar is present at desktop sizes).
+    const el = rootRef.current
+    if (!el) return
+
+    const obs = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width ?? el.clientWidth
+      setNarrow(w < NARROW_BREAKPOINT)
+    })
+    obs.observe(el)
+    // Set initial value immediately (before first resize callback)
+    setNarrow(el.clientWidth < NARROW_BREAKPOINT)
+    return () => obs.disconnect()
+  }, [])
 
   function renderSection() {
     switch (section) {
@@ -64,8 +85,99 @@ export default function FundShell() {
     }
   }
 
+  if (narrow) {
+    // ── Narrow layout: horizontal top-nav + full-width main ──────────────────
+    return (
+      <div
+        ref={rootRef}
+        className="fund-term"
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          background: 'var(--bg)',
+          color: 'var(--txt)',
+          fontFamily: 'inherit',
+          overflow: 'hidden',
+          minWidth: 0,
+        }}
+      >
+        {/* Horizontal scrollable nav bar */}
+        <nav
+          style={{
+            display: 'flex',
+            flexDirection: 'row',
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            background: 'var(--panel)',
+            borderBottom: '1px solid var(--line)',
+            flexShrink: 0,
+            // Hide scrollbar visually but keep it functional
+            scrollbarWidth: 'none',
+          }}
+        >
+          {NAV_ITEMS.map(item => {
+            const isActive = section === item.id
+            return (
+              <button
+                key={item.id}
+                onClick={() => setSection(item.id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  flexShrink: 0,
+                  padding: '10px 14px',
+                  border: 'none',
+                  borderBottom: isActive
+                    ? '2px solid var(--accent)'
+                    : '2px solid transparent',
+                  background: isActive ? 'var(--accent-dim)' : 'transparent',
+                  color: isActive ? 'var(--accent)' : 'var(--txt-dim)',
+                  fontSize: '0.85rem',
+                  fontWeight: isActive ? 600 : 400,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  transition: 'background 0.12s, color 0.12s',
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: 'var(--font-geist-mono, ui-monospace, monospace)',
+                    fontSize: '0.68rem',
+                    color: isActive ? 'var(--accent)' : 'var(--txt-mute)',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {item.index}
+                </span>
+                <span>{item.label}</span>
+              </button>
+            )
+          })}
+        </nav>
+
+        {/* Main content — gets the FULL width below the top nav */}
+        <main
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            padding: '16px',
+            minWidth: 0,
+            minHeight: 0,
+          }}
+        >
+          {renderSection()}
+        </main>
+      </div>
+    )
+  }
+
+  // ── Wide layout: left sidebar + main (original) ───────────────────────────
   return (
     <div
+      ref={rootRef}
       className="fund-term"
       style={{
         display: 'flex',

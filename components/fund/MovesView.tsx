@@ -241,6 +241,7 @@ function Panel({
       style={{
         flex: 1,
         minWidth: 0,
+        width: '100%',
         background: 'var(--panel)',
         border: '1px solid var(--line)',
         borderRadius: 10,
@@ -403,12 +404,13 @@ export default function MovesView() {
         </div>
       )}
 
-      {/* Two panels side by side — stacks to single column below ~660px */}
+      {/* Two panels side by side — stacks to single column when container is narrow */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))',
           gap: 16,
+          minWidth: 0,
         }}
       >
         <Panel
