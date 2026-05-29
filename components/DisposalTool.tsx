@@ -1360,13 +1360,14 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                   ) : (
                     <span className="text-gray-500 text-sm animate-pulse">載入中…</span>
                   )}
-                  {mAvgPct != null && (
+                  {(mAvgEff != null || sAvgPct != null) && (
                     <span className="text-xs text-gray-500">
-                      → 差幅閘門：漲幅須 ≥ <b className="text-orange-300/90">{(mAvgPct + 20).toFixed(2)}%</b>（全體+20%）才算注意
+                      → 差幅閘門：漲幅須 ≥ <b className="text-orange-300/90">{(Math.max(...[mAvgEff, sAvgPct].filter((x): x is number => x != null)) + 20).toFixed(2)}%</b>（全體/同類較高者+20%）才算注意
+                      {sAvgPct != null && <span className="text-gray-600">；同類均值 {sAvgPct > 0 ? '+' : ''}{sAvgPct.toFixed(2)}%{sectorAvg?.sectorCode ? `（類${sectorAvg.sectorCode}）` : ''}</span>}
                     </span>
                   )}
                   <span className="w-full text-xs text-amber-400/80">
-                    ⚠️ 當日（第 6 間隔）全體漲幅以 <b>0%</b> 計入（無法預測，故假設）；同類差幅無產業資料、未驗證 → 結果為估計
+                    ⚠️ 當日（第 6 間隔）全體漲幅以 <b>0%</b> 計入（無法預測，故假設）
                   </span>
                 </div>
               </div>
