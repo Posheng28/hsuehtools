@@ -6,7 +6,7 @@ import SeriesPanel  from '@/components/SeriesPanel'
 import PeriodPanel  from '@/components/PeriodPanel'
 import DisposalTool from '@/components/DisposalTool'
 import FundView     from '@/components/FundView'
-import { SeriesConfig, DateRange, DATE_RANGE_LABELS, ChartType, PeriodSegment, COLORS } from '@/lib/types'
+import { SeriesConfig, DateRange, DATE_RANGE_LABELS, ChartType, PeriodSegment } from '@/lib/types'
 
 const ChartOverlay = dynamic(() => import('@/components/ChartOverlay'), { ssr: false })
 const PeriodChart  = dynamic(() => import('@/components/PeriodChart'),  { ssr: false })

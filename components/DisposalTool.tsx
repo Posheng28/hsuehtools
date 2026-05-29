@@ -170,18 +170,6 @@ function checkClause2(
   return { triggered: true, window: hit.window, pct: hit.pct, sixDayPct, exempt }
 }
 
-// 回傳注意 level：1=款一① 2=款一②（皆第一款）3=款三（第三款，價量異常）0=無
-// volumeMet：當日量是否達 5×60日均量（款三量條件）；僅最近一日（卡 0）有意義
-function nLvl(price: number, bp: number, prevClose: number, sumKnown: number, spreadBase: number, mkt: Market, mAvgPct?: number | null, volumeMet = false, sAvgPct?: number | null): 0|1|2|3 {
-  const { t1, t2, t3 } = thresh(bp, prevClose, sumKnown, spreadBase, mkt, mAvgPct, sAvgPct)
-  // 款一① 與 款一② 都屬「第一款」；① 門檻較嚴(高)優先判定
-  if (price >= t1) return 1
-  if (price >= t2) return 2
-  // 款三：價格達門檻「且」量達標（無價差要求）→ 第三款
-  if (volumeMet && price >= t3) return 3
-  return 0
-}
-
 /**
  * 「款二不豁免價」：計算日收盤達此價 → 6日累積漲幅「超過」dupPct（上市25%/上櫃27%）
  * → 防重複豁免失效，款二成立。回傳剛好超過該漲幅的第一個合法 tick 價。

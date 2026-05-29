@@ -6,7 +6,6 @@ import { fetchTwseDailyPct, fetchTpexDailyPct, cumulativeMap, eqAvg } from '@/li
 const WINDOW = 6
 const pad = (n: number) => String(n).padStart(2, '0')
 const toYMD = (d: Date) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
-const idxNum = (s: unknown): number | null => { const n = parseFloat(String(s).replace(/,/g, '')); return isNaN(n) ? null : n }
 const rocToYMD = (roc: string) => { const m = roc.match(/(\d+)\/(\d+)\/(\d+)/); return m ? `${+m[1] + 1911}${pad(+m[2])}${pad(+m[3])}` : '' }
 const UA = 'Mozilla/5.0'
 
