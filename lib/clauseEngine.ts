@@ -20,12 +20,18 @@ export interface ClauseInput {
   price: number
   spreadBase: number
   marketAvg6: number | null
+  sectorAvg6: number | null
   c2: { window: number; pct: number; exempt: boolean } | null
   volMet: boolean
   pe: number | null; pbr: number | null; mktPe: number | null; mktPbr: number | null
   c6Assume: boolean
   sblRate: number | null; sblAmp: number | null
   c12Assume: boolean
+}
+
+const diffGate = (marketAvg6: number | null, sectorAvg6: number | null): number => {
+  const xs = [marketAvg6, sectorAvg6].filter((x): x is number => x != null)
+  return xs.length ? Math.max(...xs) + 20 : -Infinity
 }
 
 const priceForCum = (prevClose: number, sumKnown: number, x: number) => prevClose * (1 + (x - sumKnown) / 100)
@@ -38,7 +44,7 @@ export function gap11(market: Market, price: number): number {
 
 function c1(inp: ClauseInput): ClauseResult[] {
   const m = PCT[inp.market]
-  const diff = inp.marketAvg6 != null ? inp.marketAvg6 + 20 : -Infinity
+  const diff = diffGate(inp.marketAvg6, inp.sectorAvg6)
   const t1 = nextTick(priceForCum(inp.prevClose, inp.sumKnown, Math.max(m.c1a, diff)))
   const t2 = Math.max(nextTick(priceForCum(inp.prevClose, inp.sumKnown, Math.max(m.c1b, diff))), clTick(inp.spreadBase + m.gap))
   const cum = cumOf(inp)
@@ -54,7 +60,7 @@ function c2(inp: ClauseInput): ClauseResult {
 }
 function c3(inp: ClauseInput): ClauseResult {
   const m = PCT[inp.market]
-  const diff = inp.marketAvg6 != null ? inp.marketAvg6 + 20 : -Infinity
+  const diff = diffGate(inp.marketAvg6, inp.sectorAvg6)
   const t3 = nextTick(priceForCum(inp.prevClose, inp.sumKnown, Math.max(m.c3, diff)))
   const fired = inp.volMet && inp.price >= t3
   return { id: '3', fired, first: false, detail: `價≥${t3} 且當日量達標` }
