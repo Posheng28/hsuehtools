@@ -142,11 +142,32 @@
 
 ---
 
+## 盤中即時報價 + 款二當日收紅（2026-05-30）
+
+**MIS 即時報價接線**（盤中隨時更新狀態，不必等收盤）：
+- 解析器 `lib/disposal/quote.ts`（純函式 `parseMisQuote`/`misExCh`，6 個單元測試 `lib/disposal/__tests__/quote.test.ts`）；代理 `app/api/quote/route.ts`：**MIS 近即時 → Yahoo 延遲**退路，確保不低於既有行為。
+- MIS 端點 `mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_X.tw|otc_X.tw&json=1&delay=0`：一次同查上市(`tse_`)+上櫃(`otc_`)，由回應 `ex` 欄位判市場（比呼叫端 hint 可靠，6488 不帶 market 參數也解析為 TPEx）。需 `User-Agent` + `Referer: mis.twse.com.tw/stock/fibest.jsp`；server-to-server 可，瀏覽器直連被 CORS 擋 → 必經 proxy。欄位：`z` 最新價（可為 `-` 無成交 → 退 Yahoo）、`o` 開盤、`y` 昨收（≈開盤參考價）、`h/l` 高低、`u/w` 漲跌停、`v` 量（**張**，×1000=股）、`d/t` 日期時間。Next 16 Route Handler 預設不快取、讀 `req.url` 即動態；上游 `fetch` 加 `cache:'no-store'` + `AbortSignal.timeout`。**Vercel US IP 可能被 MIS 限流 → 靠 Yahoo 退路兜底**。端點細節已回寫 `~/.claude/refs/taiwan-finance-data.md`。
+- DisposalTool 接線：`refreshLive(manual?)`（用 latest-callback ref + render 鏡像 ref 避免 setInterval stale closure）；**台股交易時段（平日 09:00–13:35，`inTwMarketHours()`）每 30 秒自動輪詢** + 🔄 立即刷新鈕；匯入後即抓一次（`importedCode` effect）。狀態列顯示「盤中即時 · hh:mm:ss 更新／延遲報價」+ 來源。即時價只餵 `livePrice`/`dayVolume`/`quoteMeta`，**不改 clauseEngine**（引擎仍以歷史收盤判定）。
+
+**款二「當日收紅」收斂（重要法規理解）**：
+- 款二同窗倍漲門檻（30日>100% / 60日>130%(上櫃140%) / 90日>160%）達標只是**必要條件**；法規另要求「當日收盤價 > 當日開盤參考價」。
+- **開盤參考價 ≈ 開盤競價基準 ≈ 前一營業日收盤**（= MIS `y`，盤前即已知）→ 款二的當日過濾條件 = **當日收紅（收盤 > 前收）**。
+- 故盤中拿到即時價即可判：`isRed = livePrice > prevClose(=MIS y)`。第二款面板新增可見註記：紅 →「方向符合（款二可能觸發）」、黑 →「若收盤維持則款二今日不觸發」、無即時價 → 提示未取得。**純 UI 判定，不動 `checkClause2`**（引擎仍只看價格倍漲面，款二維持「可能觸發」標籤 + 收紅補註）。
+
+**heroCard 注意線寫法（款一擇低）**：
+- 「注意線」= 款一①（漲幅達門檻%）與 款一②（漲幅達門檻% 且起迄價差 ≥ gap 元）**兩者門檻價較低者**（動態，隨 t1/t2/全體均值差幅閘變動）→ 先被列注意的那條。
+- 款二是**另一條獨立的線**：長期 30/60/90 日倍漲，**與今日這 6 日窗口的價格無關**（卡片明文解釋「為什麼與今日價無關」）。一律用「注意」非「處置」字樣（被列注意 ≠ 直接處置）。
+
+（以上四項皆**未 commit**，待用戶確認。`npm test` 103/103、`npm run build` 綠、`/api/quote` 已 smoke test：2330→TWSE、6488→TPEx、壞代號→400。）
+
+---
+
 ## 二、API 端點（app/api/）— ⚠️ 正確的官方 URL（踩過雷）
 
 | 端點 | 用途 | 關鍵 |
 |------|------|------|
 | `stocks/route.ts` | Yahoo Finance 股價 | **時間戳要 +8h**（台股 UTC+8，否則日期少一天）；Yahoo 對 .TWO 有延遲 → 補抓 TWSE/TPEx 當月資料；回傳 `market`；`bust=1` 清快取 |
+| `quote/route.ts` | **盤中即時報價**（MIS 近即時 → Yahoo 延遲退路）；`?code&market` → `{source,market,price,open,prevClose,...}` | MIS 一次同查 tse_\|otc_、由 `ex` 判市場；CORS 擋瀏覽器需 proxy；見「盤中即時報價」專段 + `lib/disposal/quote.ts` |
 | `notices/route.ts` | 注意紀錄 | TWSE `rwd/zh/announcement/notice`；TPEx `www/zh-tw/bulletin/attention`（直接回 JSON `tables[0].data`） |
 | `disposal/route.ts` | 單股處置 | **TWSE 是 `announcement/punish`**（不是 disposal！）；**TPEx 是 `bulletin/disposal`**（不是 disposition！） |
 | `disposal-list/route.ts` | 全市場處置清單 | 同上兩個 URL，不帶 code |
@@ -196,7 +217,7 @@
 ```
 app/page.tsx                  五模式切換（overlay/period/disposal/chips/fund）
 components/
-  DisposalTool.tsx            注意/處置推演（核心，~1100 行）
+  DisposalTool.tsx            注意/處置推演（核心，~1700 行；含盤中即時報價接線）
   PeriodPanel.tsx             時段比較側欄（年份+歷史）
   SeriesPanel/ChartOverlay/PeriodPanel/PeriodChart   疊加與時段圖
   ChipsView.tsx               籌碼-個股大戶趨勢（自訂張數區間、逐週扣三大法人）

@@ -322,6 +322,15 @@ function dropUnclosedToday<T extends { date: string }>(arr: T[]): T[] {
   return arr
 }
 
+// 台股盤中時段（台灣平日 09:00–13:35；收盤 13:30 + 緩衝）→ 是否自動輪詢即時報價
+function inTwMarketHours(): boolean {
+  const tw = new Date(Date.now() + 8 * 3600 * 1000) // UTC+8 牆鐘
+  const day = tw.getUTCDay()                          // 0=日 6=六
+  if (day === 0 || day === 6) return false
+  const mins = tw.getUTCHours() * 60 + tw.getUTCMinutes()
+  return mins >= 9 * 60 && mins <= 13 * 60 + 35
+}
+
 /* ── Component ─────────────────────────────────────────────────────────────── */
 export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   const today      = fmtISO(new Date())
@@ -381,6 +390,10 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   const [sharesOutstanding, setSharesOutstanding] = useState<number | null>(null)
   const [dayVolume, setDayVolume] = useState<number | null>(null)   // 計算日盤中累積量（股）
   const [livePrice, setLivePrice] = useState<number | null>(null)   // 計算日盤中即時價
+  // 盤中自動刷新（/api/quote）：已匯入代號 + 最近一次報價 meta + 手動刷新中
+  const [importedCode, setImportedCode] = useState('')
+  const [quoteMeta, setQuoteMeta] = useState<{ at: number; source: 'mis' | 'yahoo'; time?: string; prevClose: number | null; open: number | null } | null>(null)
+  const [quoteLoading, setQuoteLoading] = useState(false)
 
   // 款六：PE/PBR 資料
   const [peData, setPeData] = useState<{ pe:number|null; pbr:number|null; mktPe:number|null; mktPbr:number|null }|null>(null)
@@ -418,11 +431,50 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days.length])
 
+  /* ── 盤中即時報價自動刷新（/api/quote → MIS，失敗退回 Yahoo）──────────────────── */
+  // 用 ref 鏡射最新值，避免 setInterval 閉包抓到過期 state
+  const importedCodeRef = useRef(importedCode); importedCodeRef.current = importedCode
+  const marketRef       = useRef<Market>(market); marketRef.current = market
+
+  const refreshLive = useCallback(async (manual = false) => {
+    const code = importedCodeRef.current
+    if (!code) return
+    if (manual) setQuoteLoading(true)
+    try {
+      const r = await fetch(`/api/quote?market=${marketRef.current}&code=${encodeURIComponent(code)}`, { cache: 'no-store' })
+      const q = await r.json()
+      if (r.ok && !q.error) {
+        if (typeof q.price === 'number')     setLivePrice(q.price)       // 即時成交價
+        if (typeof q.volShares === 'number') setDayVolume(q.volShares)   // 累計量（股）
+        setQuoteMeta({
+          at: Date.now(),
+          source: q.source === 'yahoo' ? 'yahoo' : 'mis',
+          time: typeof q.time === 'string' ? q.time : undefined,
+          prevClose: typeof q.prevClose === 'number' ? q.prevClose : null,
+          open: typeof q.open === 'number' ? q.open : null,
+        })
+      }
+    } catch { /* 靜默：保留前一次值 */ }
+    finally { if (manual) setQuoteLoading(false) }
+  }, [])
+  const refreshLiveRef = useRef(refreshLive); refreshLiveRef.current = refreshLive
+
+  // 平日盤中每 30 秒輪詢一次；非盤中（收盤後/週末/未匯入）不打 API
+  useEffect(() => {
+    const timer = setInterval(() => { if (inTwMarketHours()) refreshLiveRef.current() }, 30000)
+    return () => clearInterval(timer)
+  }, [])
+  // 匯入成功 / 切換標的後，若正值盤中立即抓一次即時價
+  useEffect(() => {
+    if (importedCode && inTwMarketHours()) refreshLiveRef.current()
+  }, [importedCode])
+
   /* ── One-click import ────────────────────────────────────────────────────── */
   const doImport = async () => {
     const code = queryCode.trim()
     if (!code) return
     setImportStatus({ loading: true })
+    setQuoteMeta(null)   // 換股 → 清掉上一檔的即時報價 meta
 
     try {
       const [stockRes, noticeRes, disposalRes] = await Promise.allSettled([
@@ -457,6 +509,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           setDays(newDays)
           setSimPrices(newDays.map(() => null))
           stockOk = true
+          setImportedCode(code)   // 啟用盤中即時輪詢
           // 款六：抓 PE/PBR
           fetch(`/api/peratio?market=${json.market}&code=${code}&date=${todayTD.replace(/-/g,'')}`).then(r=>r.json()).then(setPeData).catch(()=>setPeData(null))
           // 款四/六：抓發行股數（股）
@@ -534,6 +587,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
     setShowDisposalModal(false)
     setQueryCode(code)
     setImportStatus({ loading: true })
+    setQuoteMeta(null)   // 換股 → 清掉上一檔的即時報價 meta
     try {
       const [stockRes, noticeRes, disposalRes] = await Promise.allSettled([
         fetch(`/api/stocks?ticker=${encodeURIComponent(code)}&range=1Y&bust=1`),
@@ -558,7 +612,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           }
           const recent = all.slice(-6)
           const newDays: DayEntry[] = recent.map(d => ({ baseDateStr: d.date, bp: Math.round(d.value * 10) / 10 }))
-          setDays(newDays); setSimPrices(newDays.map(() => null)); stockOk = true
+          setDays(newDays); setSimPrices(newDays.map(() => null)); stockOk = true; setImportedCode(code)
           // 款六：抓 PE/PBR
           fetch(`/api/peratio?market=${json.market}&code=${code}&date=${todayTD.replace(/-/g,'')}`).then(r=>r.json()).then(setPeData).catch(()=>setPeData(null))
           // 款四/六：抓發行股數（股）
@@ -1195,17 +1249,18 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
     const stockName   = importStatus.stockName
     const mktLabel    = market === 'TWSE' ? '上市' : '上櫃'
 
-    // 「卡在哪一條」：款一①(漲幅)、款一②(起迄價差)，依『觸發價距現價』由近到遠排序
-    const rows = [
-      { id: '款一①', desc: '6 日累積漲幅',
-        cur: `${cum > 0 ? '+' : ''}${cum.toFixed(2)}%`, need: `${eff1.toFixed(2)}%`,
-        remain: cum >= eff1 - 1e-9 ? null : `還差 ${(eff1 - cum).toFixed(2)}%`,
-        trig: t1, fired: cum >= eff1 - 1e-9 },
-      { id: '款一②', desc: `起迄價差（另需累積 ≥ ${eff2.toFixed(0)}%）`,
-        cur: `${fNum(spread)} 元`, need: `${gap} 元`,
-        remain: spread >= gap - 1e-9 ? null : `還差 ${fNum(gap - spread)} 元`,
-        trig: t2, fired: curPrice >= t2 - 1e-9 },
-    ].sort((a, b) => (a.trig - curPrice) - (b.trig - curPrice))
+    // 「卡在哪一條」：款一①(漲幅) 與 款一②(起迄價差) 擇一顯示——
+    // 取「注意門檻較低（觸發價較低＝最容易先被注意）」的那一條；即使另一條未達，
+    // 仍可能因這條先被注意。與上方答案的注意線一致（c1.std = argmin(①門檻價, ②門檻價)）。
+    const rowC1a = { id: '款一①', desc: '6 日累積漲幅',
+      cur: `${cum > 0 ? '+' : ''}${cum.toFixed(2)}%`, need: `${eff1.toFixed(2)}%`,
+      remain: cum >= eff1 - 1e-9 ? null : `還差 ${(eff1 - cum).toFixed(2)}%`,
+      trig: t1, fired: cum >= eff1 - 1e-9 }
+    const rowC1b = { id: '款一②', desc: `起迄價差（另需累積 ≥ ${eff2.toFixed(0)}%）`,
+      cur: `${fNum(spread)} 元`, need: `${gap} 元`,
+      remain: spread >= gap - 1e-9 ? null : `還差 ${fNum(gap - spread)} 元`,
+      trig: t2, fired: curPrice >= t2 - 1e-9 }
+    const rows = [c1.std === '①' ? rowC1a : rowC1b]
 
     const distChips: [string, number, number][] = [
       ['①連3日第一款', rules.c1, 3], ['②連5日注意', rules.ca, 5],
@@ -1222,6 +1277,24 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           </span>
           <span className="text-gray-200 font-bold">📅 {calcMD(focusDay)} 計算日</span>
           <span className="text-gray-500 text-sm">基準 {baseMD(focusDay)} / {fNum(focusDay.bp)}</span>
+          {/* 盤中即時報價狀態 + 立即刷新 */}
+          <div className="ml-auto flex items-center gap-2">
+            {quoteMeta && (
+              <span className="text-[11px] text-gray-400 whitespace-nowrap">
+                <span className={quoteMeta.source === 'mis' ? 'text-emerald-400' : 'text-amber-400'}>
+                  {quoteMeta.source === 'mis' ? '盤中即時' : '延遲報價'}
+                </span>
+                <span className="text-gray-600"> · {quoteMeta.source === 'mis' && quoteMeta.time ? quoteMeta.time : new Date(quoteMeta.at).toLocaleTimeString('zh-TW', { hour12: false })} 更新</span>
+              </span>
+            )}
+            <button
+              onClick={() => refreshLive(true)}
+              disabled={quoteLoading || !importedCode}
+              title="立即抓取證交所 MIS 即時報價（失敗退回 Yahoo）"
+              className="text-[11px] px-2 py-0.5 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-500 disabled:opacity-40 transition-colors">
+              {quoteLoading ? '刷新中…' : '🔄 立即刷新'}
+            </button>
+          </div>
         </div>
 
         {/* 答案：現價 → 注意線 */}
@@ -1237,6 +1310,17 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
             : <span className="text-red-400 text-sm font-semibold">已突破注意線</span>}
           {!c1.feasible && <span className="text-xs text-gray-500">（漲停 {fNum(maxP)} 外，單日拖不到）</span>}
         </div>
+
+        {/* 為什麼是這條注意線：款一①/② 取較低者 + 款二為獨立維度 */}
+        <p className="text-xs text-gray-500 leading-relaxed border-t border-gray-800 pt-3">
+          注意線取
+          <b className="text-gray-300"> 款一①</b>（漲到 {fNum(t1)}，使 6 日累積漲幅達 {eff1.toFixed(0)}%）與
+          <b className="text-gray-300"> 款一②</b>（漲到 {fNum(t2)}，使起迄價差達 {gap} 元且累積≥{eff2.toFixed(0)}%）
+          <b> 兩者較低者</b> → 款一{c1.std} <b className="text-red-300">{fNum(c1.price)}</b> 會先被列注意。
+          <span className="block mt-0.5 text-gray-600">
+            款二是<b className="text-gray-400">另一條獨立</b>的線：30/60/90 日長期漲幅達 100%+ 就可能被注意，<b className="text-gray-400">與今日這 6 日窗口的價格無關</b>。
+          </span>
+        </p>
 
         {/* 卡在哪一條 */}
         <div className="space-y-1 border-t border-gray-800 pt-3">
@@ -1258,7 +1342,8 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
               <span className={`font-semibold w-16 ${clause2.exempt ? 'text-sky-400' : 'text-yellow-400'}`}>款二</span>
               <span className="text-gray-400 flex-1 min-w-[8rem]">長期起迄倍漲（不同維度）</span>
               <span className="font-mono text-gray-300">{clause2.window}日 {clause2.pct?.toFixed(1)}%</span>
-              <span className={`text-xs whitespace-nowrap ${clause2.exempt ? 'text-sky-400' : 'text-yellow-400'}`}>{clause2.exempt ? '已豁免' : '已觸發'}</span>
+              <span className={`text-xs whitespace-nowrap ${clause2.exempt ? 'text-sky-400' : 'text-yellow-400'}`}>{clause2.exempt ? '已豁免' : '可能觸發'}</span>
+              {!clause2.exempt && <span className="text-[11px] text-gray-500 whitespace-nowrap">· 另需當日收紅</span>}
             </div>
           )}
         </div>
@@ -1413,6 +1498,10 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                         : state === 'exempt' ? '第二款：已豁免（防重複）'
                         : '第二款：未觸發'
             const titleCol = state === 'hit' ? 'text-yellow-300' : state === 'exempt' ? 'text-sky-300' : 'text-green-300'
+            // 盤中即時：收紅與否（收盤 > 當日開盤參考價≈前一營業日收盤＝MIS 昨收）——款二同日方向條件
+            const refClose = quoteMeta?.prevClose ?? null
+            const redKnown = livePrice != null && refClose != null
+            const isRed    = redKnown && livePrice! > refClose!
             return (
               <div className={`p-4 rounded-xl border-2 ${box}`}>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -1427,7 +1516,19 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                 </div>
                 <div className="text-sm mt-2">
                   {state === 'hit' && (
-                    <details className="text-gray-400">
+                    <>
+                      <div className="mb-1.5 text-gray-300">
+                        另須<b className="text-yellow-200">當日收紅</b>（收盤價 &gt; 當日開盤參考價≈前一營業日收盤）才成立。
+                        {redKnown
+                          ? <span className="block mt-0.5">
+                              盤中即時 <b className="text-gray-100">{fNum(livePrice!)}</b> {isRed ? '＞' : '≤'} 昨收 <b className="text-gray-300">{fNum(refClose!)}</b> →{' '}
+                              {isRed
+                                ? <b className="text-yellow-300">目前收紅，方向符合（款二可能觸發）</b>
+                                : <b className="text-green-300">目前收黑，若收盤維持則款二今日不觸發</b>}
+                            </span>
+                          : <span className="block mt-0.5 text-gray-500">（盤中即時價未取得；盤中按「🔄 立即刷新」或收盤後可判定收紅與否）</span>}
+                      </div>
+                      <details className="text-gray-400">
                       <summary className="cursor-pointer hover:text-gray-200 select-none">為什麼第二款獨立？防重複豁免判定</summary>
                       <div className="space-y-1 mt-1.5">
                         <div>※ 第二款是「長期起迄倍漲」維度（{clause2.window} 營業日起點 → 最近收盤的漲幅），與款一/三的「6 日累積漲幅」<b>不同維度</b>，且差幅條件無法用歷史回推，故獨立判斷、此為價格面上限。</div>
@@ -1441,6 +1542,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                         </div>
                       </div>
                     </details>
+                    </>
                   )}
                   {state === 'exempt' && (
                     <span className="text-sky-200">
@@ -1609,8 +1711,8 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
                 <div className="text-xs text-gray-400 space-y-1 pl-1">
                   <div>規則①：連續 <b className="text-gray-200">3</b> 個營業日經第一款公布 → 處置</div>
                   <div>規則②：連續 <b className="text-gray-200">5</b> 個營業日經第一款～第八款公布 → 處置</div>
-                  <div>規則③：最近 <b className="text-gray-200">10</b> 日內有 <b className="text-gray-200">6</b> 日經公布 → 處置</div>
-                  <div>規則④：最近 <b className="text-gray-200">30</b> 日內有 <b className="text-gray-200">12</b> 日經公布 → 處置</div>
+                  <div>規則③：最近 <b className="text-gray-200">10</b> 日內有 <b className="text-gray-200">6</b> 日經第一款～第八款公布 → 處置</div>
+                  <div>規則④：最近 <b className="text-gray-200">30</b> 日內有 <b className="text-gray-200">12</b> 日經第一款～第八款公布 → 處置</div>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">被處置後，注意次數從處置生效日<b>重新起算</b>（本工具自動帶入最近一次處置日）。</p>
               </section>

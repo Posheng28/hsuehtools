@@ -137,12 +137,14 @@ function c2(inp: ClauseInput): ClauseResult {
   return {
     id: '2', name: '中長期漲跌異常',
     lawText: `30日 > ${m.c2[0]}% / 60日 > ${m.c2[1]}% / 90日 > ${m.c2[2]}%，且收盤須高於(漲)/低於(跌)當日開盤參考價`,
-    fired: hit, first: false, badge: hit ? 'fired' : 'safe',
+    // 顯示為「可能觸發」(badge=possible)：法規另需「收盤>開盤參考價」差幅條件，工具無開盤價無法驗證；
+    // fired 仍為 hit，沙盤模擬計數（summarize 讀 fired）照算價格面達標日，不受此顯示調整影響。
+    fired: hit, first: false, badge: hit ? 'possible' : 'safe',
     headerThreshold: inp.c2 ? `${inp.c2.window}日累積 ${inp.c2.pct.toFixed(1)}%${inp.c2.exempt ? '（防重複豁免）' : ''}` : '無中長期窗口資料',
     groups: inp.c2 ? [{
-      title: '中長期窗口', threshold: `${inp.c2.window} 日 > 視窗門檻`, status: hit ? 'met' : (inp.c2.exempt ? 'safe' : 'possible'),
+      title: '中長期窗口', threshold: `${inp.c2.window} 日 > 視窗門檻`, status: inp.c2.exempt ? 'safe' : 'possible',
       subs: [
-        { label: `${inp.c2.window}日累積漲跌`, threshold: '> 視窗門檻', current: `${inp.c2.pct.toFixed(1)}%`, status: inp.c2.pct > 0 ? 'met' : 'safe' },
+        { label: `${inp.c2.window}日累積漲跌`, threshold: '> 視窗門檻', current: `${inp.c2.pct.toFixed(1)}%`, status: inp.c2.pct > 0 ? 'possible' : 'safe' },
         { label: '防重複豁免', threshold: `近30日已公布注意且 6 日累積 ≤ ${m.c2dup}% 則豁免`, status: inp.c2.exempt ? 'safe' : 'met', note: inp.c2.exempt ? '豁免成立 → 不適用' : '未豁免' },
       ],
     }] : [],
