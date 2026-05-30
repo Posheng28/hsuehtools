@@ -340,7 +340,7 @@ export default function Home() {
                   <li>• 輸入代碼 + 開始/結束日期，加入時段</li>
                   <li>• 所有時段的 <span className="text-gray-200">起點對齊</span>，以 % 變化顯示</li>
                   <li>• 可比較同一股票不同時期，或不同股票同一時期</li>
-                  <li>• X 軸顯示距起始日天數（D+N / W+N / M+N）</li>
+                  <li>• X 軸顯示距起始日的交易日數（起點＝0，其餘標 +N）；滑鼠移上去的提示框會顯示每個時段的真實日期</li>
                   <li>• 卡片 <code className="bg-gray-800 px-1 rounded text-xs">✎</code> 編輯：就地改代碼/名稱/起迄（預填現值，可只改日期）；<code className="bg-gray-800 px-1 rounded text-xs">⧉</code> 複製：複製一張並立刻編輯，快速產生同標的不同時段</li>
                   <li>• 📅 年份快選、🕘 歷史紀錄（自動保存，重整仍在）</li>
                 </ul>

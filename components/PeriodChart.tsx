@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react'
 import {
-  createChart, LineSeries, IChartApi, ISeriesApi, SeriesType, Time, MouseEventParams,
+  createChart, LineSeries, IChartApi, ISeriesApi, SeriesType, Time, MouseEventParams, isBusinessDay,
 } from 'lightweight-charts'
 import { PeriodSegment } from '@/lib/types'
 
@@ -12,18 +12,38 @@ interface Props {
 
 type AnySeriesApi = ISeriesApi<SeriesType>
 
-// Map segment data to relative x-axis starting from a fixed reference date
-// Each trading day i → reference + i calendar days
-const REF = '2020-01-01'
+// 時段比較把「每一個交易日」映射到從固定參考日起算的連續日曆日（第 i 個交易日 → REF + i 天），
+// 讓所有時段都對齊到第 0 天。X 軸真正的日曆日期沒有意義，純粹當作索引，靠 tickMarkFormatter 重新標示。
+// REF 刻意選在非年/月邊界，避免任何刻度退化成「年」刻度而外洩 2020 這種原始日期。
+const REF = '2020-06-15'
+const REF_MS = Date.parse(REF + 'T00:00:00Z')
+
 function refDate(dayIndex: number): string {
-  const d = new Date(REF + 'T00:00:00Z')
+  const d = new Date(REF_MS)
   d.setUTCDate(d.getUTCDate() + dayIndex)
   return d.toISOString().split('T')[0]
 }
-function dayIndex(dateStr: string): number {
-  const ref = new Date(REF + 'T00:00:00Z').getTime()
-  const d   = new Date(dateStr + 'T00:00:00Z').getTime()
-  return Math.round((d - ref) / 86400000)
+
+// lightweight-charts v5 會把字串日期資料轉成 BusinessDay 物件，crosshair / tickMark 回傳的
+// time 可能是 BusinessDay | ISO 字串 | UTCTimestamp(秒)。一律換算回「距起點的天數索引」。
+function timeToIndex(time: Time): number {
+  let ms: number
+  if (isBusinessDay(time)) {
+    ms = Date.UTC(time.year, time.month - 1, time.day)
+  } else if (typeof time === 'string') {
+    ms = Date.parse(time + 'T00:00:00Z')
+  } else {
+    ms = (time as number) * 1000
+  }
+  return Math.round((ms - REF_MS) / 86400000)
+}
+
+// 軸刻度標籤：第 0 個交易日＝「起點」，其餘標示「+N」（距起點的交易日數）。
+// 絕不回傳 null，否則 lightweight-charts 會用預設格式把合成日期（2020/…）秀出來。
+function axisLabel(time: Time): string {
+  const idx = timeToIndex(time)
+  if (!Number.isFinite(idx) || idx <= 0) return '起點'
+  return `+${idx}`
 }
 
 function buildData(seg: PeriodSegment): { time: Time; value: number; origDate: string }[] {
@@ -64,13 +84,7 @@ export default function PeriodChart({ segments }: Props) {
         borderColor: '#374151',
         timeVisible: false,
         secondsVisible: false,
-        tickMarkFormatter: (time: string) => {
-          const idx = dayIndex(time)
-          if (idx === 0) return '起點'
-          if (idx < 7)  return `D+${idx}`
-          if (idx < 30) return `W+${Math.floor(idx / 7)}`
-          return `M+${Math.floor(idx / 30)}`
-        },
+        tickMarkFormatter: (time: Time) => axisLabel(time),
       },
       rightPriceScale: { borderColor: '#374151', visible: true },
       leftPriceScale:  { borderColor: '#374151', visible: false },
@@ -96,8 +110,8 @@ export default function PeriodChart({ segments }: Props) {
       if (!tooltip) return
       if (!param.time || !param.point || param.point.x < 0) { tooltip.style.opacity = '0'; return }
 
-      const idx  = dayIndex(param.time as string)
-      let html = `<div style="color:#9ca3af;font-size:11px;margin-bottom:6px">起點後第 ${idx} 天</div>`
+      const idx  = timeToIndex(param.time)
+      let html = `<div style="color:#9ca3af;font-size:11px;margin-bottom:6px">起點後第 ${idx} 個交易日</div>`
 
       for (const [id, lwcSeries] of seriesMapRef.current) {
         const pt = param.seriesData.get(lwcSeries) as { value?: number } | undefined
@@ -196,7 +210,7 @@ export default function PeriodChart({ segments }: Props) {
       )}
       {/* X-axis label */}
       <div className="absolute bottom-8 left-1/2 -translate-x-1/2 pointer-events-none" style={{ zIndex: 10 }}>
-        <span className="text-xs text-gray-600 bg-gray-950/80 px-2 py-0.5 rounded">X 軸：距起始日天數</span>
+        <span className="text-xs text-gray-600 bg-gray-950/80 px-2 py-0.5 rounded">X 軸：距起始日的交易日數（起點＝0）</span>
       </div>
     </div>
   )

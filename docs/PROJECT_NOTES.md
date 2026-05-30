@@ -183,6 +183,12 @@
 - 改 ticker/from/to 才會重新 fetch；存檔同樣寫入歷史紀錄。
 - 父層機制：`page.tsx` 的 `handleUpdateSegment(id, patch)`（`'ticker'|'from'|'to' in patch` 才 refetch），透過 `onUpdate` prop 傳入；複製沿用既有 `onAdd`（自帶 fetch）。
 
+### PeriodChart X 軸：合成日期 + tickMarkFormatter（踩雷）
+- 設計：每個時段第 `i` 個**交易日** → 合成日曆日 `REF + i 天`，讓所有時段對齊到第 0 天；X 軸真正的日期沒意義，純當索引。
+- **lightweight-charts v5 雷**：餵字串日期（`'2020-06-15'`）當資料，library 內部轉成 **`BusinessDay` 物件**；`tickMarkFormatter`/crosshair 的 `time` 參數收到的是 **BusinessDay（或 UTCTimestamp 秒）, 不是字串**。舊碼把它當字串算 → `NaN`。
+- **`tickMarkFormatter` 回傳 `null` 會 fallback 到預設格式器**（把合成日期 `2020/1/1` 直接秀出來）→ 這就是「起點顯示 2020/1/1」的根因。
+- 修法（`PeriodChart.tsx`）：`timeToIndex(time)` 用 `isBusinessDay()` 三態分流（BusinessDay→`Date.UTC`／字串→`Date.parse`／number→`*1000`）換回天數索引；`axisLabel()` **永不回 null**（idx 0=「起點」、其餘「+N」）。`REF='2020-06-15'`（刻意避開年/月邊界）。crosshair 同樣改用 `timeToIndex`，tooltip 顯示真實日期。
+
 ---
 
 ## 四、檔案地圖
