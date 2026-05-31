@@ -158,7 +158,7 @@
 - 「注意線」= 款一①（漲幅達門檻%）與 款一②（漲幅達門檻% 且起迄價差 ≥ gap 元）**兩者門檻價較低者**（動態，隨 t1/t2/全體均值差幅閘變動）→ 先被列注意的那條。
 - 款二是**另一條獨立的線**：長期 30/60/90 日倍漲，**與今日這 6 日窗口的價格無關**（卡片明文解釋「為什麼與今日價無關」）。一律用「注意」非「處置」字樣（被列注意 ≠ 直接處置）。
 
-（以上四項皆**未 commit**，待用戶確認。`npm test` 103/103、`npm run build` 綠、`/api/quote` 已 smoke test：2330→TWSE、6488→TPEx、壞代號→400。）
+（以上四項已 commit 上線 master `4ff2627`；當時 `npm test` 103/103、`npm run build` 綠、`/api/quote` 已 smoke test：2330→TWSE、6488→TPEx、壞代號→400。後續測試已增至 113/113。）
 
 ---
 
@@ -169,6 +169,17 @@
 - `ClauseResult` 新增 `priceFloor: number|null`、`gateText: string`（引擎＝唯一真相來源，UI 純渲染；過濾/排序皆在引擎）。
 - **移除**：heroCard「為什麼是這條注意線」段、「卡在哪一條」表、常駐「第二款狀態」整塊（收紅併入摘要行；豁免狀態由 `AttentionDetailPanel` 款二卡呈現）。保留：處置距離 chips、差幅閘門明細 details、6 卡注意明細面板。
 - **對拍博磊(3581)**（dev server 實測）：注意線 **312.5**（款一②）→「只能再漲 **+32.1%**」（最近收盤 236.5）；款二~六僅顯示「**款六 量 ≥ 2,550張 可能觸發**」——款三/四/五 因 t3≈312.5 > 漲停 260 隱藏。三段舊區塊皆消失、chips/差幅 details/六卡面板皆在。
+
+---
+
+## 徽章可達性修正 + 四位數價格版面（2026-05-31）
+
+- **注意細節面板表頭徽章改用「可達性」判定**（`components/disposal/AttentionDetailPanel.tsx` `effBadge`）：價格型款（`priceFloor != null`）的表頭燈號改看「門檻價是否 ≤ 計算日漲停價 `maxP`」——可達 →「可能觸發」(橘)、連漲停都摸不到 →「無風險」(綠)；量能/比率型款（款二/六，`priceFloor=null`）才沿用引擎 `badge`。與 heroCard `pickWatchSummary` 同一套可達性邏輯（呼叫點新增 `maxP={getDayBounds(0, simPrices, days).maxP}`）。
+  - **修的 bug**：`c1()` 引擎 `badge` 只有 `fired`/`safe`（無 `possible`），價格未達就直接 `safe` → 表頭亮綠「無風險」，但展開的細項列（`priceGroup` status = `met ? 'met' : 'possible'`）卻顯示「可能」→ 表頭與內容自相矛盾（user 回報「都講可能了 上面不要顯示無風險」）。
+  - ⚠️ **已知殘留（未處理）**：表頭已可達性化，但**展開後的逐項細條件仍直接吃引擎原始 status**。故若某款門檻價「連漲停都到不了」，表頭正確顯示「無風險」、那一列細項卻可能仍寫「可能」（反向不一致）。要徹底一致需把 `maxP` 也傳進引擎 `priceGroup` 做可達性（會動引擎＋測試，暫緩）。當前 user 案例（國巨款一②門檻 800 ≤ 漲停 ≈812）為可達，不受影響。
+- **六日預測卡四位數價格被遮擋修正**（`components/DisposalTool.tsx`）：價格輸入框獨立成整行（`flex-1 min-w-0`），日漲跌幅移到下方「累積 +X%」那一行右側（`justify-between`），解決四位數股價（≥1000）被日漲跌標籤蓋住（user 回報「四位數字 數字被擋住了」）。
+- 順手移除 `Clause2Result` 未使用的 `sixDayPct` 回傳欄位（仍保留區域變數供 `exempt` 計算）。
+- 已 commit + push（master `469d696`）；`npm run build` 綠、`npx vitest run` 113/113。
 
 ---
 
