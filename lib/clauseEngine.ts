@@ -14,6 +14,8 @@ export interface ClauseResult {
   first: boolean
   badge: 'safe' | 'possible' | 'fired'
   headerThreshold: string
+  priceFloor: number | null   // 觸發所需收盤價下限；款二/六無價格門檻為 null
+  gateText: string            // 單行摘要用：最關鍵剩餘門檻（缺口）
   groups: CondGroup[]
   exclusions?: { label: string; status: 'met' | 'unimpl' | 'na' }[]
   blocked?: boolean
@@ -24,6 +26,8 @@ const tickOf = (p: number) => p < 10 ? 0.01 : p < 50 ? 0.05 : p < 100 ? 0.1 : p 
 const nextTick = (p: number) => { const t = tickOf(p); let k = Math.ceil(p / t) * t; if (k <= p + 1e-9) k += t; return +k.toFixed(2) }
 const clTick   = (p: number) => { const t = tickOf(p); return +(Math.round(p / t) * t).toFixed(2) }
 const fmtLot = (n: number) => Math.round(n).toLocaleString('en-US')
+// 由現價漲到 target 的百分比（target > cur 時為正）— 摘要行「再漲 X%」缺口
+const upPct = (target: number, cur: number) => cur > 0 ? (target / cur - 1) * 100 : 0
 
 const PCT = {
   TWSE: { c1a: 32, c1b: 25, c3: 25, gap: 50, c2: [100, 130, 160] as const, pe: 60, pbr: 6, c2dup: 25,
@@ -114,12 +118,15 @@ function c1(inp: ClauseInput): ClauseResult[] {
   const r1: ClauseResult = {
     id: '1①', name: '累積漲跌幅異常', lawText: `6 日累積漲跌 > ${m.c1a}% 且差幅 ≥20%`,
     fired: f1, first: f1, badge: f1 ? 'fired' : 'safe',
-    headerThreshold: `收盤 ≥ ${t1}`, groups: [priceGroup(inp, t1, m.c1a)], exclusions: exC1(inp),
+    headerThreshold: `收盤 ≥ ${t1}`,
+    priceFloor: t1, gateText: `收盤 ≥ ${t1}`,
+    groups: [priceGroup(inp, t1, m.c1a)], exclusions: exC1(inp),
   }
   const r2: ClauseResult = {
     id: '1②', name: '累積漲跌幅異常（含起迄價差）', lawText: `6 日累積漲跌 > ${m.c1b}% 且差幅 ≥20% 且起迄價差 ≥ ${m.gap} 元`,
     fired: f2, first: f2, badge: f2 ? 'fired' : 'safe',
     headerThreshold: `收盤 ≥ ${t2}（含起迄價差 ≥ ${m.gap} 元）`,
+    priceFloor: t2, gateText: `收盤 ≥ ${t2}（起迄價差 ≥ ${m.gap} 元）`,
     groups: [
       priceGroup(inp, t2, m.c1b),
       { title: '起迄價差', threshold: `≥ ${m.gap} 元`, status: spread >= m.gap ? 'met' : 'possible',
@@ -141,6 +148,7 @@ function c2(inp: ClauseInput): ClauseResult {
     // fired 仍為 hit，沙盤模擬計數（summarize 讀 fired）照算價格面達標日，不受此顯示調整影響。
     fired: hit, first: false, badge: hit ? 'possible' : 'safe',
     headerThreshold: inp.c2 ? `${inp.c2.window}日累積 ${inp.c2.pct.toFixed(1)}%${inp.c2.exempt ? '（防重複豁免）' : ''}` : '無中長期窗口資料',
+    priceFloor: null, gateText: '當日需收紅',
     groups: inp.c2 ? [{
       title: '中長期窗口', threshold: `${inp.c2.window} 日 > 視窗門檻`, status: inp.c2.exempt ? 'safe' : 'possible',
       subs: [
@@ -174,6 +182,10 @@ function c3(inp: ClauseInput): ClauseResult {
     lawText: `6 日累積漲跌 > ${m.c3}% 且差幅 ≥20% 且 當日量 ≥ ${m.volMult}×近${m.volWin}日均量（放大倍數與全體差 ≥ ${m.volMagDiff} 倍）`,
     fired, first: false, blocked, badge: fired ? 'fired' : priceMet ? 'possible' : 'safe',
     headerThreshold: volThresh != null ? `收盤 ≥ ${t3} 且 量 ≥ ${fmtLot(volThresh)}張` : `收盤 ≥ ${t3} 且 量達標`,
+    priceFloor: t3,
+    gateText: priceMet
+      ? (volThresh != null ? `量 ≥ ${fmtLot(volThresh)}張` : '量達標')
+      : `收盤 ≥ ${t3}（再漲 +${upPct(t3, inp.price).toFixed(1)}%）`,
     groups: [priceGroup(inp, t3, m.c3), volGroup],
     exclusions: [
       { label: `當日量 < ${m.volMinLot}張 不適用`, status: excluded ? 'met' : 'na' },
@@ -205,6 +217,10 @@ function c4(inp: ClauseInput): ClauseResult {
     lawText: `6 日累積漲跌 > ${m.c3}% 且差幅 ≥20% 且 當日週轉率 ≥ ${m.turnover}%（與全體差 ≥ ${m.turnoverDiff}%）`,
     fired, first: false, blocked, badge: fired ? 'fired' : priceMet ? 'possible' : 'safe',
     headerThreshold: turnoverLot != null ? `收盤 ≥ ${t3} 且 量 ≥ ${fmtLot(turnoverLot)}張` : `收盤 ≥ ${t3} 且 週轉率 ≥ ${m.turnover}%`,
+    priceFloor: t3,
+    gateText: priceMet
+      ? (turnoverLot != null ? `量 ≥ ${fmtLot(turnoverLot)}張` : `週轉率 ≥ ${m.turnover}%`)
+      : `收盤 ≥ ${t3}（再漲 +${upPct(t3, inp.price).toFixed(1)}%）`,
     groups: [priceGroup(inp, t3, m.c3), turnGroup],
     exclusions: [
       { label: '同類 < 5 種不適用', status: inp.sectorAvg6 == null ? 'met' : 'na' },
@@ -223,6 +239,10 @@ function c5(inp: ClauseInput): ClauseResult {
     lawText: `6 日累積漲跌 > ${m.c3}% 且差幅 ≥20% 且 單一券商受託買賣集中度 > ${m.brokerConc}%（每分支 +${m.brokerBranchAdd}%，上限 ${m.brokerConcCap}%）且 > ${m.brokerMinLot}張`,
     fired, first: false, blocked, badge: fired ? 'fired' : priceMet ? 'possible' : 'safe',
     headerThreshold: `收盤 ≥ ${t3}（且券商佔比 > ${m.brokerConc}%）`,
+    priceFloor: t3,
+    gateText: priceMet
+      ? `券商佔比 > ${m.brokerConc}%`
+      : `收盤 ≥ ${t3}（再漲 +${upPct(t3, inp.price).toFixed(1)}%）`,
     groups: [
       priceGroup(inp, t3, m.c3),
       { title: '券商集中', threshold: `集中度 > ${m.brokerConc}%（非公開）`, status: inp.c5Assume ? 'assumed' : 'safe',
@@ -245,6 +265,8 @@ function c6(inp: ClauseInput): ClauseResult {
     lawText: `當日同時：PE 負或 ≥${m.pe}倍(且>全體×2)、PBR ≥${m.pbr}倍(且>全體×2)、週轉率 ≥${m.c6Turnover}% 且量 ≥${m.c6MinLot}張、四項之一(產業PBR×${m.c6PbrMult}/券商或投資人集中)`,
     fired, first: false, blocked, badge: fired ? 'fired' : (peHit && pbrHit) ? 'possible' : 'safe',
     headerThreshold: (peHit && pbrHit) ? `PE ${inp.pe?.toFixed(1) ?? '—'} / PBR ${inp.pbr?.toFixed(2) ?? '—'} 等四項` : '不會觸發',
+    priceFloor: null,
+    gateText: c6VolLot != null ? `量 ≥ ${fmtLot(c6VolLot)}張` : `量 ≥ ${m.c6MinLot}張`,
     groups: [
       { title: '項一 本益比', threshold: `PE 負 或 ≥${m.pe}倍且 >全體×2`, status: peHit ? 'met' : 'safe',
         subs: [{ label: 'PE', threshold: `<0 或 ≥${m.pe}（>全體均值×2）`, current: inp.pe != null ? inp.pe.toFixed(1) : '—', status: peHit ? 'met' : 'safe', note: inp.mktPe != null ? `全體中位數 ${inp.mktPe.toFixed(1)}` : undefined }] },

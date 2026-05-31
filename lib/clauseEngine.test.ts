@@ -226,3 +226,31 @@ describe('對拍 attstock 黃金值（量門檻）', () => {
     expect(thLot / shares * 100).toBeCloseTo(10, 6) // 反推回 10%
   })
 })
+
+describe('priceFloor / gateText 欄位', () => {
+  it('款三/四/五 priceFloor = t3(125.5)；款二/六 priceFloor = null', () => {
+    const rs = evalClauses({ ...base, price: 130 })
+    expect(find(rs, '3').priceFloor).toBe(125.5)
+    expect(find(rs, '4').priceFloor).toBe(125.5)
+    expect(find(rs, '5').priceFloor).toBe(125.5)
+    expect(find(rs, '2').priceFloor).toBeNull()
+    expect(find(rs, '6').priceFloor).toBeNull()
+  })
+  it('款三 價已達(possible) → gateText 顯示量門檻', () => {
+    const r = find(evalClauses({ ...base, price: 130, avgVol60: 1000 }), '3')
+    expect(r.gateText).toContain('量 ≥ 5,000張')
+  })
+  it('款三 價未達 → gateText 顯示價格缺口（再漲 %）', () => {
+    const r = find(evalClauses({ ...base, price: 120, avgVol60: 1000 }), '3')
+    expect(r.gateText).toContain('收盤 ≥ 125.5')
+    expect(r.gateText).toContain('再漲 +4.6%')
+  })
+  it('款六 gateText 顯示量門檻 max(5%×發行,3000) = 50,000張', () => {
+    const r = find(evalClauses({ ...base, price: 130, sharesOutstanding: 1_000_000, pe: 200, pbr: 12, mktPe: 20, mktPbr: 2 }), '6')
+    expect(r.gateText).toContain('量 ≥ 50,000張')
+  })
+  it('款二 gateText 固定「當日需收紅」', () => {
+    const r = find(evalClauses({ ...base, c2: { window: 60, pct: 140, exempt: false } }), '2')
+    expect(r.gateText).toBe('當日需收紅')
+  })
+})
