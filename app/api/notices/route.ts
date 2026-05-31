@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { classifyNoticeLevel } from '@/lib/disposal/noticeLevel'
 
 function fmt8(d: Date): string {
   return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`
@@ -57,7 +58,9 @@ export async function GET(req: NextRequest) {
             if (!stockName) stockName = String(row[2]).replace(/\*/g, '').trim()
             const dateStr = parseROCDot(String(row[5]))
             const info    = String(row[4] || '')
-            const level: 1 | 2 = info.includes('第一款') ? 1 : 2
+            const level = classifyNoticeLevel(info)
+            // 僅第九款~第十四款（如第十三款當日沖銷）不計入任何處置規則，整筆排除
+            if (level === 0) continue
             if (!seen.has(dateStr)) { seen.add(dateStr); records.push({ dateStr, level }) }
           }
         }
@@ -76,7 +79,9 @@ export async function GET(req: NextRequest) {
             if (!stockName) stockName = String(row[2]).replace(/\*/g, '').trim()
             const dateStr = parseROCSlash(String(row[5]))
             const info    = String(row[4] || '')
-            const level: 1 | 2 = info.includes('第一款') ? 1 : 2
+            const level = classifyNoticeLevel(info)
+            // 僅第九款~第十四款（如第十三款當日沖銷）不計入任何處置規則，整筆排除
+            if (level === 0) continue
             if (!seen.has(dateStr)) { seen.add(dateStr); records.push({ dateStr, level }) }
           }
         }
