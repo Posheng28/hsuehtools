@@ -4,7 +4,7 @@ import { getCached, setCached } from '@/lib/cache'
 export type Market = 'TWSE' | 'TPEx'
 
 /** 每日漲跌% 取小數 2 位無條件捨去(向零) — 注意股累積漲幅官方逐日進位法 */
-const trunc2 = (x: number) => { const v = Math.round(x * 1e8) / 1e8; return Math.trunc(v * 100) / 100 }
+export const trunc2 = (x: number) => { const v = Math.round(x * 1e8) / 1e8; return Math.trunc(v * 100) / 100 }
 
 const idxNum = (s: unknown): number | null => { const n = parseFloat(String(s).replace(/,/g, '')); return isNaN(n) ? null : n }
 const isOrd = (c: string) => /^[1-9]\d{3}$/.test(c)   // 普通股(排除 ETF/ETN/權證/債券/特別股)

@@ -43,6 +43,10 @@
 - **款一①②、款三差幅閘 = max(全體均值, 同類均值) + 20（2026/05/29 完成）**：全體/同類均值皆「自算個股等權累積漲幅、排除標的本身」；上市/上櫃同口徑（上櫃已從櫃買指數加權改為個股等權）。
   - 新端點 `GET /api/sectoravg?market&code&win`：回 `{ targetCum, marketAvg, sectorAvg, sectorCode }`，均值皆排除標的本身。
   - 共用資料層 `lib/disposal/marketData.ts`（`fetchTwseDailyPct` / `fetchTpexDailyPct` / `fetchSectorMap` / `cumulativeMap` / `eqAvg`）。
+- **同類均值盤中即時化（2026/06/01 完成）**：計算日當日不再固定 0%——`/api/sectoravg?live=1` 用同類成員 MIS 即時價算出今日漲跌併入 6 日累積。**只做同類；全體仍當日 0%**（全市場上千檔成本過高）。閘門取 `max(全體, 同類live) + 20`，同類噴時跟著動。
+  - 純函式 `lib/disposal/sectorLive.ts`：`liveSectorAvg`（成員=同類∩cums∩≠標的；liveCum=歷史cum+今日%；無即時成員當 0% 仍留在平均內，n 與歷史一致）、`misExChBatch`（每 40 檔一批，`|` 串）、`misRowsToTodayPct`（trunc2 同口徑）、`fetchSectorTodayPct`（MIS 批量 glue，整批失敗則該批略過）；+ `quote.ts` 的 `parseMisQuoteRows`（解析 `msgArray` 全部列）。
+  - route 新增回應欄 `sectorAvgLive / sectorTodayAvg / sectorLiveN`（無 live 或抓不到 → null）。前端 `sAvgPct = sectorAvgLive ?? sectorAvg`；`refreshLive`（每 30 秒 + 立即刷新）盤中重抓 `live=1`；非盤中退回歷史 0%。MIS 失敗靜默退回歷史值。明細「同類」列顯示「當日即時 +X%」。
+  - 對拍（2327 國巨 2026/06/01 盤中實測）：歷史同類 5.14% → live 6.36%（當日 +1.21%），閘門 25.14%→26.36%，注意線 800→808；同類值隨每次刷新跳動（6.36→6.46→6.22…）= 即時生效。
   - 對拍 attstock 黃金值（窗口 5/22~28）：國巨 2327 累積 = 27.36；同類（產業別 28、排除國巨）= 6.15；全體（排除國巨）= 2.22，已固化為 `lib/disposal/__tests__/golden.test.ts` 回歸測試。
 
 ### 第三款（價量同時異常）— 已實作於原子引擎
@@ -193,7 +197,7 @@
 | `disposal/route.ts` | 單股處置 | **TWSE 是 `announcement/punish`**（不是 disposal！）；**TPEx 是 `bulletin/disposal`**（不是 disposition！） |
 | `disposal-list/route.ts` | 全市場處置清單 | 同上兩個 URL，不帶 code |
 | `market-avg/route.ts` | 全體均值（款一差幅 ≥ 20% 基底）；**上市/上櫃同口徑**（皆個股等權累積漲幅平均，上櫃已從櫃買指數加權改為個股等權）| 見下方專段 |
-| `sectoravg/route.ts` | 同類/全體均值（款一①②、款三差幅閘）；回 `targetCum/marketAvg/sectorAvg/sectorCode`，均值排除標的本身 | `lib/disposal/marketData.ts` |
+| `sectoravg/route.ts` | 同類/全體均值（款一①②、款三差幅閘）；回 `targetCum/marketAvg/sectorAvg/sectorCode`，均值排除標的本身；**`&live=1` 加 `sectorAvgLive/sectorTodayAvg/sectorLiveN`（同類盤中即時）** | `lib/disposal/marketData.ts`、`lib/disposal/sectorLive.ts` |
 
 ### `market-avg` — 全體累積漲幅（差幅 ≥ 20% 用）上市/上櫃同口徑（2026/05/29 起）
 - **上市 = 全體普通股「逐日漲跌%(2 位無條件捨去) 相加」再等權(簡單)平均**（**非** TAIEX 指數）。逐檔抓 `twse.com.tw/exchangeReport/MI_INDEX?response=json&date=YYYYMMDD&type=ALLBUT0999`（`row[0]`=代號、`row[8]`=收盤、`row[9]`=漲跌方向(green=跌)、`row[10]`=漲跌價差），只取普通股 `[1-9]\d{3}`，6 日窗口交集後等權平均（`fetchTwseDailyPct`+`eqAvg`，含重試避免掉檔）。

@@ -1,6 +1,6 @@
 // lib/disposal/__tests__/quote.test.ts
 import { describe, it, expect } from 'vitest'
-import { parseMisQuote, misExCh } from '@/lib/disposal/quote'
+import { parseMisQuote, parseMisQuoteRows, misExCh } from '@/lib/disposal/quote'
 
 // 真實 MIS getStockInfo 回應節錄（2026-05-29 盤後快照；2330 上市、6488 上櫃）
 const MIS_FIXTURE = {
@@ -66,5 +66,25 @@ describe('misExCh', () => {
   it('上市→tse_、上櫃→otc_', () => {
     expect(misExCh('TWSE', '2330')).toBe('tse_2330.tw')
     expect(misExCh('TPEx', '6488')).toBe('otc_6488.tw')
+  })
+})
+
+describe('parseMisQuoteRows', () => {
+  it('解析多檔：tse/otc 混合、z 為 - 視為 null', () => {
+    const json = { msgArray: [
+      { c: '2327', z: '800.0', y: '780.0', ex: 'tse' },
+      { c: '2330', z: '-',     y: '1000', ex: 'tse' },
+      { c: '6488', z: '500',   y: '490',  ex: 'otc' },
+    ] }
+    expect(parseMisQuoteRows(json)).toEqual([
+      { code: '2327', price: 800,  prevClose: 780,  market: 'TWSE' },
+      { code: '2330', price: null, prevClose: 1000, market: 'TWSE' },
+      { code: '6488', price: 500,  prevClose: 490,  market: 'TPEx' },
+    ])
+  })
+  it('無 msgArray / 空 → []，無 c 的列跳過', () => {
+    expect(parseMisQuoteRows(null)).toEqual([])
+    expect(parseMisQuoteRows({})).toEqual([])
+    expect(parseMisQuoteRows({ msgArray: [{ z: '1' }] })).toEqual([])
   })
 })

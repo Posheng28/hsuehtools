@@ -360,7 +360,10 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
     TWSE: number | null; TPEx: number | null; baseDate?: string; lastClosedDate?: string
   }>({ TWSE: null, TPEx: null })
   // 同類/全體均值（匯入個股後，用個股實際 6 日窗口自算；排除標的本身）
-  const [sectorAvg, setSectorAvg] = useState<{ sectorAvg: number | null; marketAvg: number | null; sectorCode: string | null; targetCum: number | null } | null>(null)
+  const [sectorAvg, setSectorAvg] = useState<{
+    sectorAvg: number | null; marketAvg: number | null; sectorCode: string | null; targetCum: number | null
+    sectorAvgLive?: number | null; sectorTodayAvg?: number | null; sectorLiveN?: number | null
+  } | null>(null)
   useEffect(() => {
     let cancelled = false
     // 失敗或上市/上櫃任一 avg 為 null（暫時性，如全市場資料被限流）時重試，避免卡在「載入中」
@@ -434,6 +437,17 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   // 用 ref 鏡射最新值，避免 setInterval 閉包抓到過期 state
   const importedCodeRef = useRef(importedCode); importedCodeRef.current = importedCode
   const marketRef       = useRef<Market>(market); marketRef.current = market
+  // 同類均值請求參數鏡射（供盤中輪詢閉包重建 URL）
+  const sectorReqRef = useRef<{ market: Market; code: string; win: string } | null>(null)
+
+  // 取同類均值；live=true 時帶 &live=1。失敗回 null。
+  const fetchSectorAvg = useCallback(async (m: Market, c: string, win: string, live: boolean) => {
+    try {
+      const r = await fetch(`/api/sectoravg?market=${m}&code=${c}&win=${win}${live ? '&live=1' : ''}`)
+      const d = await r.json()
+      return d.error ? null : d
+    } catch { return null }
+  }, [])
 
   const refreshLive = useCallback(async (manual = false) => {
     const code = importedCodeRef.current
@@ -453,9 +467,17 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           open: typeof q.open === 'number' ? q.open : null,
         })
       }
+      // 盤中：同類均值也用同類成員即時價重算（全體維持 0%）
+      const sr = sectorReqRef.current
+      if (sr) {
+        const d = await fetchSectorAvg(sr.market, sr.code, sr.win, true)
+        if (d) setSectorAvg(prev => prev
+          ? { ...prev, sectorAvgLive: d.sectorAvgLive ?? null, sectorTodayAvg: d.sectorTodayAvg ?? null, sectorLiveN: d.sectorLiveN ?? null }
+          : d)
+      }
     } catch { /* 靜默：保留前一次值 */ }
     finally { if (manual) setQuoteLoading(false) }
-  }, [])
+  }, [fetchSectorAvg])
   const refreshLiveRef = useRef(refreshLive); refreshLiveRef.current = refreshLive
 
   // 平日盤中每 30 秒輪詢一次；非盤中（收盤後/週末/未匯入）不打 API
@@ -513,12 +535,13 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           fetch(`/api/peratio?market=${json.market}&code=${code}&date=${todayTD.replace(/-/g,'')}`).then(r=>r.json()).then(setPeData).catch(()=>setPeData(null))
           // 款四/六：抓發行股數（股）
           fetch(`/api/shares?market=${json.market}&code=${code}`).then(r=>r.json()).then(d=>setSharesOutstanding(d.shares ?? null)).catch(()=>setSharesOutstanding(null))
-          // 同類/全體均值：用近 6 日的「最近 5 個 interval 日」(= days.slice(1)) 作窗口
+          // 同類/全體均值：用近 6 日的「最近 5 個 interval 日」作窗口；盤中帶 live=1（同類即時）
           {
-            const winYMDs = all.slice(-5).map(d => d.date.replace(/-/g, ''))
+            const winStr = all.slice(-5).map(d => d.date.replace(/-/g, '')).join(',')
+            sectorReqRef.current = { market: json.market, code, win: winStr }
             setSectorAvg(null)
-            fetch(`/api/sectoravg?market=${json.market}&code=${code}&win=${winYMDs.join(',')}`)
-              .then(r => r.json()).then(d => { if (!d.error) setSectorAvg(d) }).catch(() => setSectorAvg(null))
+            fetchSectorAvg(json.market, code, winStr, inTwMarketHours())
+              .then(d => { if (d) setSectorAvg(d) })
           }
         }
       }
@@ -616,12 +639,13 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           fetch(`/api/peratio?market=${json.market}&code=${code}&date=${todayTD.replace(/-/g,'')}`).then(r=>r.json()).then(setPeData).catch(()=>setPeData(null))
           // 款四/六：抓發行股數（股）
           fetch(`/api/shares?market=${json.market}&code=${code}`).then(r=>r.json()).then(d=>setSharesOutstanding(d.shares ?? null)).catch(()=>setSharesOutstanding(null))
-          // 同類/全體均值：用近 6 日的「最近 5 個 interval 日」(= days.slice(1)) 作窗口
+          // 同類/全體均值：用近 6 日的「最近 5 個 interval 日」作窗口；盤中帶 live=1（同類即時）
           {
-            const winYMDs = all.slice(-5).map(d => d.date.replace(/-/g, ''))
+            const winStr = all.slice(-5).map(d => d.date.replace(/-/g, '')).join(',')
+            sectorReqRef.current = { market: json.market, code, win: winStr }
             setSectorAvg(null)
-            fetch(`/api/sectoravg?market=${json.market}&code=${code}&win=${winYMDs.join(',')}`)
-              .then(r => r.json()).then(d => { if (!d.error) setSectorAvg(d) }).catch(() => setSectorAvg(null))
+            fetchSectorAvg(json.market, code, winStr, inTwMarketHours())
+              .then(d => { if (d) setSectorAvg(d) })
           }
         }
       }
@@ -751,7 +775,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   const startPrice = days[days.length-1]?.bp ?? 100
   const mAvgPct = marketAvg[market]   // 當前市場別的全體已知累積漲幅%（null=未載入→純價格門檻）
   // 同類均值%（當前市場別；匯入後才有）。窗口與 mAvgPct 對齊：皆為近6日的5個interval
-  const sAvgPct = sectorAvg?.sectorAvg ?? null
+  const sAvgPct = sectorAvg?.sectorAvgLive ?? sectorAvg?.sectorAvg ?? null
   // 匯入個股後，全體均值改用 sectoravg 回傳值(同窗口、排除自己)；未匯入時用 mount 載入的 marketAvg
   const mAvgEff = sectorAvg?.marketAvg ?? mAvgPct
   // 類股規定排除：個股 PE 為負(虧損)或 ≥ 門檻倍(上市60/上櫃65) → 差幅閘門「不採計同類均值」，僅看全體。
@@ -1343,14 +1367,14 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           </summary>
           <div className="mt-2 space-y-1 border-l-2 border-gray-700 pl-3">
             <div className="text-xs text-gray-500">
-              近 6 日{marketAvg.baseDate && marketAvg.lastClosedDate ? `（${marketAvg.baseDate.slice(4, 6)}/${marketAvg.baseDate.slice(6)}→${marketAvg.lastClosedDate.slice(4, 6)}/${marketAvg.lastClosedDate.slice(6)}）` : ''}・已知 5 間隔，當日（第 6 間隔）以 0% 計
+              近 6 日{marketAvg.baseDate && marketAvg.lastClosedDate ? `（${marketAvg.baseDate.slice(4, 6)}/${marketAvg.baseDate.slice(6)}→${marketAvg.lastClosedDate.slice(4, 6)}/${marketAvg.lastClosedDate.slice(6)}）` : ''}・已知 5 間隔；全體當日以 0% 計{sectorAvg?.sectorTodayAvg != null ? '，同類當日以即時價計' : '，同類當日以 0% 計'}
             </div>
             {(mAvgEff != null || sAvgPct != null) ? (() => {
               const hi    = gateVals.length ? Math.max(...gateVals) : null
               const peVal = peData?.pe ?? null
               const detailRows = [
                 { label: `全體${mktLabel}均值`, v: mAvgEff, excluded: false },
-                { label: `同類均值${sectorAvg?.sectorCode ? `（類${sectorAvg.sectorCode}）` : ''}`, v: sAvgPct, excluded: peExcludesSector },
+                { label: `同類均值${sectorAvg?.sectorCode ? `（類${sectorAvg.sectorCode}）` : ''}${sectorAvg?.sectorTodayAvg != null ? `・當日即時 ${sectorAvg.sectorTodayAvg > 0 ? '+' : ''}${sectorAvg.sectorTodayAvg}%` : ''}`, v: sAvgPct, excluded: peExcludesSector },
               ]
               return (
                 <>

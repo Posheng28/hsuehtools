@@ -70,3 +70,23 @@ export function parseMisQuote(json: unknown, code: string): MisQuote | null {
 export function misExCh(market: Market, code: string): string {
   return `${market === 'TPEx' ? 'otc' : 'tse'}_${code}.tw`
 }
+
+export interface MisRowLite { code: string; price: number | null; prevClose: number | null; market: Market }
+
+/** 解析 MIS getStockInfo 回應的「全部」列（批量查多檔用）。無 c 的列跳過。 */
+export function parseMisQuoteRows(json: unknown): MisRowLite[] {
+  const arr = (json as { msgArray?: MisRow[] } | null)?.msgArray
+  if (!Array.isArray(arr)) return []
+  const out: MisRowLite[] = []
+  for (const r of arr) {
+    const code = String(r?.c ?? '').trim()
+    if (!code) continue
+    out.push({
+      code,
+      price: num(r.z),
+      prevClose: num(r.y),
+      market: String(r.ex ?? '').trim().toLowerCase() === 'otc' ? 'TPEx' : 'TWSE',
+    })
+  }
+  return out
+}
