@@ -152,6 +152,8 @@
 - 解析器 `lib/disposal/quote.ts`（純函式 `parseMisQuote`/`misExCh`，6 個單元測試 `lib/disposal/__tests__/quote.test.ts`）；代理 `app/api/quote/route.ts`：**MIS 近即時 → Yahoo 延遲**退路，確保不低於既有行為。
 - MIS 端點 `mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_X.tw|otc_X.tw&json=1&delay=0`：一次同查上市(`tse_`)+上櫃(`otc_`)，由回應 `ex` 欄位判市場（比呼叫端 hint 可靠，6488 不帶 market 參數也解析為 TPEx）。需 `User-Agent` + `Referer: mis.twse.com.tw/stock/fibest.jsp`；server-to-server 可，瀏覽器直連被 CORS 擋 → 必經 proxy。欄位：`z` 最新價（可為 `-` 無成交 → 退 Yahoo）、`o` 開盤、`y` 昨收（≈開盤參考價）、`h/l` 高低、`u/w` 漲跌停、`v` 量（**張**，×1000=股）、`d/t` 日期時間。Next 16 Route Handler 預設不快取、讀 `req.url` 即動態；上游 `fetch` 加 `cache:'no-store'` + `AbortSignal.timeout`。**Vercel US IP 可能被 MIS 限流 → 靠 Yahoo 退路兜底**。端點細節已回寫 `~/.claude/refs/taiwan-finance-data.md`。
 - DisposalTool 接線：`refreshLive(manual?)`（用 latest-callback ref + render 鏡像 ref 避免 setInterval stale closure）；**台股交易時段（平日 09:00–13:35，`inTwMarketHours()`）每 30 秒自動輪詢** + 🔄 立即刷新鈕；匯入後即抓一次（`importedCode` effect）。狀態列顯示「盤中即時 · hh:mm:ss 更新／延遲報價」+ 來源。即時價只餵 `livePrice`/`dayVolume`/`quoteMeta`，**不改 clauseEngine**（引擎仍以歷史收盤判定）。
+- **heroCard「現價」基準（2026/06/01）**：未模擬時，**未定案就用 `livePrice` 顯示「現價」**（與沙盤卡 `evalCard(0, …livePrice…)` 一致，「只能再漲%」也以現價為分母）；定案後回「最近收盤」。先前 bug：盤中只顯示前一交易日收盤、不反映已抓到的即時價。
+- **live 閘門用 `!tdClosed`（`new Date().getHours()<14`）非 `inTwMarketHours()`**：13:35–14:00 收盤未定案窗口仍預測「今天」、即時價仍有效，用 `tdClosed` 才不會在這段誤關；**定案後（計算日已前進到下一日）即時報價屬「已收盤日」，若併入同類 live 會與已含該日的歷史窗口重複計入** → `sAvgPct` 與 `refreshLive` 同類重抓、heroCard `liveNow` 三處都用 `tdClosed` 收斂。實測：定案後按立即刷新，注意線維持歷史值（不再被推高）。
 
 **款二「當日收紅」收斂（重要法規理解）**：
 - 款二同窗倍漲門檻（30日>100% / 60日>130%(上櫃140%) / 90日>160%）達標只是**必要條件**；法規另要求「當日收盤價 > 當日開盤參考價」。

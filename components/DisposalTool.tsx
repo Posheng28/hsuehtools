@@ -467,9 +467,10 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
           open: typeof q.open === 'number' ? q.open : null,
         })
       }
-      // 盤中：同類均值也用同類成員即時價重算（全體維持 0%）
+      // 盤中(尚未定案)：同類均值也用同類成員即時價重算（全體維持 0%）。
+      // 定案後(≥14:00)計算日已前進，即時報價屬已收盤日會與歷史窗口重複 → 不重抓。
       const sr = sectorReqRef.current
-      if (sr) {
+      if (sr && new Date().getHours() < 14) {
         const d = await fetchSectorAvg(sr.market, sr.code, sr.win, true)
         if (d) setSectorAvg(prev => prev
           ? { ...prev, sectorAvgLive: d.sectorAvgLive ?? null, sectorTodayAvg: d.sectorTodayAvg ?? null, sectorLiveN: d.sectorLiveN ?? null }
@@ -775,7 +776,8 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
   const startPrice = days[days.length-1]?.bp ?? 100
   const mAvgPct = marketAvg[market]   // 當前市場別的全體已知累積漲幅%（null=未載入→純價格門檻）
   // 同類均值%（當前市場別；匯入後才有）。窗口與 mAvgPct 對齊：皆為近6日的5個interval
-  const sAvgPct = sectorAvg?.sectorAvgLive ?? sectorAvg?.sectorAvg ?? null
+  // 定案後(計算日已前進)即時同類報價屬已收盤日、會與歷史窗口重複 → 一律用歷史值；盤中才用 live
+  const sAvgPct = (tdClosed ? null : sectorAvg?.sectorAvgLive) ?? sectorAvg?.sectorAvg ?? null
   // 匯入個股後，全體均值改用 sectoravg 回傳值(同窗口、排除自己)；未匯入時用 mount 載入的 marketAvg
   const mAvgEff = sectorAvg?.marketAvg ?? mAvgPct
   // 類股規定排除：個股 PE 為負(虧損)或 ≥ 門檻倍(上市60/上櫃65) → 差幅閘門「不採計同類均值」，僅看全體。
@@ -1261,7 +1263,10 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
     const c1          = mergeC1(t1, t2, maxP)
     const chosen0     = simPrices[0]
     const simulated   = chosen0 != null
-    const curPrice    = simulated ? chosen0! : prevClose0
+    // 未模擬時：尚未定案(仍預測「今天」收盤)且有即時價 → 用即時價(與沙盤卡一致)；
+    // 定案後(改預測下一交易日)即時報價屬已收盤日 → 退回最近收盤，避免誤標
+    const liveNow     = tdClosed ? null : livePrice
+    const curPrice    = simulated ? chosen0! : (liveNow ?? prevClose0)
     const gateVals    = [mAvgEff, sAvgGate].filter((x): x is number => x != null)
     const gate        = gateVals.length ? Math.max(...gateVals) + 20 : null
     const stockName   = importStatus.stockName
@@ -1306,7 +1311,7 @@ export default function DisposalTool({ sidebarOpen, onCloseSidebar }: Props) {
 
         {/* 答案：現價 → 注意線 */}
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-gray-800 pt-3">
-          <span className="text-gray-400 text-sm">{simulated ? '模擬現價' : '最近收盤'}</span>
+          <span className="text-gray-400 text-sm">{simulated ? '模擬現價' : liveNow != null ? '現價' : '最近收盤'}</span>
           <span className="text-2xl font-extrabold text-gray-100">{fNum(curPrice)}</span>
           <span className="text-gray-600 text-xl">→</span>
           <span className="text-gray-400 text-sm">⚠️ 注意線</span>
